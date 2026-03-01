@@ -348,11 +348,71 @@ pub struct CCSwitchService {
 }
 
 impl CCSwitchService {
+    const DEFAULT_CLAUDE_FALLBACK_MODEL: &'static str = "claude-sonnet-4-20250514";
+
     pub fn new(db: Arc<DBService>) -> Self {
         Self {
             db,
             switcher: ModelSwitcher::new(),
         }
+    }
+
+    fn resolve_model_name(model_config: &ModelConfig) -> String {
+        model_config
+            .api_model_id
+            .clone()
+            .unwrap_or_else(|| model_config.name.clone())
+    }
+
+    fn looks_like_claude_model(model: &str) -> bool {
+        let lower = model.trim().to_ascii_lowercase();
+        if lower.is_empty() {
+            return false;
+        }
+        lower.contains("claude")
+            || matches!(
+                lower.as_str(),
+                "sonnet" | "haiku" | "opus" | "claude-sonnet" | "claude-haiku" | "claude-opus"
+            )
+    }
+
+    async fn resolve_claude_launch_model(
+        &self,
+        terminal: &Terminal,
+        model_config: &ModelConfig,
+        effective_base_url: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let requested_model = Self::resolve_model_name(model_config);
+
+        // Custom Anthropic-compatible gateways may legitimately use non-Claude model names.
+        if effective_base_url.is_some() || Self::looks_like_claude_model(&requested_model) {
+            return Ok(requested_model);
+        }
+
+        if let Some(default_model) =
+            ModelConfig::find_default_for_cli(&self.db.pool, &terminal.cli_type_id).await?
+        {
+            let fallback_model = Self::resolve_model_name(&default_model);
+            if !fallback_model.trim().is_empty() {
+                tracing::warn!(
+                    terminal_id = %terminal.id,
+                    model_config_id = %terminal.model_config_id,
+                    requested_model = %requested_model,
+                    fallback_model = %fallback_model,
+                    "Invalid Claude model for official endpoint; falling back to CLI default model"
+                );
+                return Ok(fallback_model);
+            }
+        }
+
+        tracing::warn!(
+            terminal_id = %terminal.id,
+            model_config_id = %terminal.model_config_id,
+            requested_model = %requested_model,
+            fallback_model = Self::DEFAULT_CLAUDE_FALLBACK_MODEL,
+            "Invalid Claude model for official endpoint; falling back to hardcoded Claude model"
+        );
+        Ok(Self::DEFAULT_CLAUDE_FALLBACK_MODEL.to_string())
     }
 
     async fn resolve_workflow_orchestrator_fallback(
@@ -620,8 +680,21 @@ impl CCSwitchService {
                     claude_home.to_string_lossy().to_string(),
                 );
 
-                // Handle base URL: set if provided, otherwise remove inherited
-                if let Some(base_url) = &terminal.custom_base_url {
+                let custom_api_key = terminal.get_custom_api_key()?;
+                let (orchestrator_base_url, orchestrator_api_key) =
+                    if terminal.custom_base_url.is_none() || custom_api_key.is_none() {
+                        self.resolve_workflow_orchestrator_fallback(&terminal.workflow_task_id)
+                            .await?
+                    } else {
+                        (None, None)
+                    };
+                let effective_base_url = terminal
+                    .custom_base_url
+                    .clone()
+                    .or(orchestrator_base_url.clone());
+
+                // Handle base URL: terminal custom_url first, then workflow orchestrator fallback.
+                if let Some(base_url) = effective_base_url.as_ref() {
                     env.set
                         .insert("ANTHROPIC_BASE_URL".to_string(), base_url.clone());
                 } else {
@@ -632,13 +705,12 @@ impl CCSwitchService {
                 // 1. Terminal custom_api_key
                 // 2. Global Claude config (~/.claude/settings.json) - only for official Anthropic API
                 // 3. Workflow orchestrator config (only if base URLs are compatible)
-                let custom_api_key = terminal.get_custom_api_key()?;
                 let mut fallback_api_key = None;
 
                 if custom_api_key.is_none() {
                     // Try global Claude config first, but ONLY if terminal uses official Anthropic API
                     // Global config is designed for Anthropic API and won't work with custom endpoints
-                    if terminal.custom_base_url.is_none() {
+                    if effective_base_url.is_none() {
                         let config = match read_claude_config().await {
                             Ok(cfg) => cfg,
                             Err(e) => {
@@ -655,23 +727,19 @@ impl CCSwitchService {
                     // If global config also doesn't have API key, try workflow orchestrator
                     // BUT only if the base URLs are compatible (same API service)
                     if fallback_api_key.is_none() {
-                        let (orch_base_url, orch_api_key) = self
-                            .resolve_workflow_orchestrator_fallback(&terminal.workflow_task_id)
-                            .await?;
-
                         // Check if base URLs are compatible
                         let terminal_base_url = terminal.custom_base_url.as_deref();
-                        let can_use_fallback = match (terminal_base_url, orch_base_url.as_deref()) {
-                            // Both use official Anthropic API (no custom base URL)
-                            (None, None) => true,
-                            // Both use the same custom base URL
-                            (Some(t_url), Some(o_url)) if t_url == o_url => true,
-                            // Different base URLs - cannot use fallback
-                            _ => false,
-                        };
+                        let can_use_fallback =
+                            match (terminal_base_url, orchestrator_base_url.as_deref()) {
+                                // Terminal does not pin base_url: workflow fallback is allowed.
+                                (None, _) => true,
+                                // Terminal pins custom endpoint: fallback key must match same endpoint.
+                                (Some(t_url), Some(o_url)) if t_url == o_url => true,
+                                _ => false,
+                            };
 
                         if can_use_fallback {
-                            fallback_api_key = orch_api_key;
+                            fallback_api_key = orchestrator_api_key.clone();
                             if fallback_api_key.is_some() {
                                 tracing::info!(
                                     terminal_id = %terminal.id,
@@ -683,10 +751,10 @@ impl CCSwitchService {
                             tracing::warn!(
                                 terminal_id = %terminal.id,
                                 terminal_base_url = ?terminal_base_url,
-                                orchestrator_base_url = ?orch_base_url,
+                                orchestrator_base_url = ?orchestrator_base_url,
                                 "Cannot use workflow orchestrator API key fallback: base URLs are incompatible"
                             );
-                        }
+                        };
                     }
                 }
 
@@ -700,7 +768,7 @@ impl CCSwitchService {
                 };
 
                 let api_key = custom_api_key.or(fallback_api_key).ok_or_else(|| {
-                    if terminal.custom_base_url.is_some() {
+                    if effective_base_url.is_some() {
                         anyhow::anyhow!(
                             "Claude Code auth token not configured for custom API endpoint. Please set terminal custom_api_key"
                         )
@@ -730,16 +798,21 @@ impl CCSwitchService {
                     );
                 }
 
+                let model = self
+                    .resolve_claude_launch_model(
+                        terminal,
+                        &model_config,
+                        effective_base_url.as_deref(),
+                    )
+                    .await?;
+
                 // Create settings.json and force Claude CLI to load it via --settings.
                 // This prevents global ~/.claude/settings.json from overriding isolated auth config.
                 if let Ok(settings_path) = create_claude_settings(
                     &claude_home,
                     &api_key,
                     terminal.custom_base_url.as_deref(),
-                    &model_config
-                        .api_model_id
-                        .clone()
-                        .unwrap_or_else(|| model_config.name.clone()),
+                    &model,
                 ) {
                     args.push("--settings".to_string());
                     args.push(settings_path.to_string_lossy().to_string());
@@ -752,10 +825,6 @@ impl CCSwitchService {
                     .insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
 
                 // Set model for all tiers
-                let model = model_config
-                    .api_model_id
-                    .clone()
-                    .unwrap_or_else(|| model_config.name.clone());
                 env.set.insert("ANTHROPIC_MODEL".to_string(), model.clone());
                 env.set
                     .insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(), model.clone());
@@ -1055,7 +1124,11 @@ impl CCSwitchService {
 mod tests {
     use std::sync::Arc;
 
-    use db::DBService;
+    use chrono::Utc;
+    use db::{
+        DBService,
+        models::{ModelConfig, Terminal},
+    };
     use serde_json::Value;
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::tempdir;
@@ -1158,5 +1231,92 @@ mod tests {
             settings["env"]["ANTHROPIC_BASE_URL"],
             "https://api.example.com/v1"
         );
+    }
+
+    #[test]
+    fn test_looks_like_claude_model() {
+        assert!(CCSwitchService::looks_like_claude_model(
+            "claude-sonnet-4-20250514"
+        ));
+        assert!(CCSwitchService::looks_like_claude_model("Claude-Haiku-4-5"));
+        assert!(!CCSwitchService::looks_like_claude_model("glm-5"));
+    }
+
+    fn make_test_terminal(custom_base_url: Option<&str>) -> Terminal {
+        let now = Utc::now();
+        Terminal {
+            id: "term-test".to_string(),
+            workflow_task_id: "task-test".to_string(),
+            cli_type_id: "cli-claude-code".to_string(),
+            model_config_id: "model-test".to_string(),
+            custom_base_url: custom_base_url.map(str::to_string),
+            custom_api_key: None,
+            role: None,
+            role_description: None,
+            order_index: 0,
+            status: "waiting".to_string(),
+            process_id: None,
+            pty_session_id: None,
+            session_id: None,
+            execution_process_id: None,
+            vk_session_id: None,
+            auto_confirm: true,
+            last_commit_hash: None,
+            last_commit_message: None,
+            started_at: None,
+            completed_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn make_test_model(model: &str) -> ModelConfig {
+        let now = Utc::now();
+        ModelConfig {
+            id: "model-test".to_string(),
+            cli_type_id: "cli-claude-code".to_string(),
+            name: "model-test".to_string(),
+            display_name: model.to_string(),
+            api_model_id: Some(model.to_string()),
+            is_default: false,
+            is_official: false,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_claude_launch_model_falls_back_for_invalid_official_model() {
+        let db = setup_test_db().await;
+        let service = CCSwitchService::new(db);
+        let terminal = make_test_terminal(None);
+        let model_config = make_test_model("glm-5");
+
+        let resolved = service
+            .resolve_claude_launch_model(&terminal, &model_config, None)
+            .await
+            .expect("resolve_claude_launch_model should succeed");
+
+        assert_ne!(resolved, "glm-5");
+        assert!(CCSwitchService::looks_like_claude_model(&resolved));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_claude_launch_model_keeps_custom_endpoint_model() {
+        let db = setup_test_db().await;
+        let service = CCSwitchService::new(db);
+        let terminal = make_test_terminal(Some("https://custom-anthropic-compatible.example"));
+        let model_config = make_test_model("glm-5");
+
+        let resolved = service
+            .resolve_claude_launch_model(
+                &terminal,
+                &model_config,
+                Some("https://custom-anthropic-compatible.example"),
+            )
+            .await
+            .expect("resolve_claude_launch_model should succeed");
+
+        assert_eq!(resolved, "glm-5");
     }
 }
