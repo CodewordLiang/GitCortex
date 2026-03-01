@@ -11,6 +11,7 @@ import {
   AgentSettings,
   GeneralSettings,
   McpSettings,
+  ModelsSettings,
   OrganizationSettings,
   ProjectSettings,
   ReposSettings,
@@ -149,6 +150,7 @@ function AppContent() {
                   />
                 )}
                 <Route path="agents" element={<AgentSettings />} />
+                <Route path="models" element={<ModelsSettings />} />
                 <Route path="mcp" element={<McpSettings />} />
               </Route>
               <Route

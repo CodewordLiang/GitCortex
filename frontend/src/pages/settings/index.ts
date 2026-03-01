@@ -4,4 +4,5 @@ export { ProjectSettings } from './ProjectSettings';
 export { ReposSettings } from './ReposSettings';
 export { OrganizationSettings } from './OrganizationSettings';
 export { AgentSettings } from './AgentSettings';
+export { ModelsSettings } from './ModelsSettings';
 export { McpSettings } from './McpSettings';

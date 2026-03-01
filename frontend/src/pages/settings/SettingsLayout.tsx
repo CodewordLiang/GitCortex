@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Settings,
   Cpu,
+  Bot,
   Server,
   X,
   FolderOpen,
@@ -40,13 +41,17 @@ const settingsNavigation = [
     icon: Cpu,
   },
   {
+    path: 'models',
+    icon: Bot,
+  },
+  {
     path: 'mcp',
     icon: Server,
   },
 ];
 
 export function SettingsLayout() {
-  const { t } = useTranslation('settings');
+  const { t } = useTranslation(['settings', 'workflow']);
   const { remoteFeaturesEnabled } = useUserSystem();
   const { enableScope, disableScope } = useHotkeysContext();
   const goToPreviousPath = usePreviousPath();
@@ -90,6 +95,14 @@ export function SettingsLayout() {
               <nav className="space-y-1">
                 {visibleSettingsNavigation.map((item) => {
                   const Icon = item.icon;
+                  const titleKey =
+                    item.path === 'models'
+                      ? 'workflow:step3.title'
+                      : `settings.layout.nav.${item.path}`;
+                  const descriptionKey =
+                    item.path === 'models'
+                      ? 'workflow:steps.models.description'
+                      : `settings.layout.nav.${item.path}Desc`;
                   return (
                     <NavLink
                       key={item.path}
@@ -108,9 +121,9 @@ export function SettingsLayout() {
                       <Icon className="h-4 w-4 mt-0.5 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <div className="font-medium">
-                          {t(`settings.layout.nav.${item.path}`)}
+                          {t(titleKey)}
                         </div>
-                        <div>{t(`settings.layout.nav.${item.path}Desc`)}</div>
+                        <div>{t(descriptionKey)}</div>
                       </div>
                     </NavLink>
                   );

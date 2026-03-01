@@ -27,6 +27,7 @@ import { useToast } from '@/components/ui/toast';
 interface Step3ModelsProps {
   config: WizardConfig;
   onUpdate: (updates: Partial<WizardConfig>) => void;
+  dialogContentClassName?: string;
 }
 
 const API_TYPES = {
@@ -74,6 +75,7 @@ const initialFormData: ModelFormData = {
 export const Step3Models: React.FC<Step3ModelsProps> = ({
   config,
   onUpdate,
+  dialogContentClassName,
 }) => {
   const { t } = useTranslation('workflow');
   const { showToast } = useToast();
@@ -339,7 +341,12 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
           handleCloseDialog();
         }
       }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent
+          className={cn(
+            'max-w-2xl max-h-[90vh] overflow-y-auto',
+            dialogContentClassName
+          )}
+        >
           <DialogHeader>
             <DialogTitle>
               {editingModel ? t('step3.dialog.editTitle') : t('step3.dialog.addTitle')}
@@ -374,12 +381,12 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
             {/* API Type */}
             <Field>
               <FieldLabel htmlFor="apiType">{t('step3.fields.apiType.label')}</FieldLabel>
-              <div className="flex flex-wrap gap-base">
+              <div className="flex flex-wrap gap-3">
                 {(Object.keys(API_TYPES) as ApiType[]).map((type) => (
                   <label
                     key={type}
                     className={cn(
-                      'flex items-center gap-base px-base py-half rounded-sm border text-base cursor-pointer transition-colors',
+                      'inline-flex items-center px-3 py-2 rounded-md border text-base cursor-pointer transition-colors',
                       'hover:border-brand hover:text-high',
                       formData.apiType === type
                         ? 'border-brand bg-brand/10 text-high'
@@ -549,13 +556,13 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
             </Field>
           </div>
 
-          <DialogFooter>
-            <div className="flex gap-base">
+          <DialogFooter className="sticky bottom-0 z-10 border-t border-border bg-[hsl(var(--card))] px-base py-base">
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
               <button
                 type="button"
                 onClick={handleCloseDialog}
                 className={cn(
-                  'px-base py-half rounded-sm border text-base',
+                  'w-full sm:w-auto min-w-[5.5rem] px-base py-half rounded-sm border text-base whitespace-nowrap',
                   'bg-secondary text-normal hover:bg-panel hover:text-high',
                   'transition-colors'
                 )}
@@ -566,7 +573,7 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
                 type="button"
                 onClick={handleSave}
                 className={cn(
-                  'px-base py-half rounded-sm text-base',
+                  'w-full sm:w-auto min-w-[5.5rem] px-base py-half rounded-sm text-base whitespace-nowrap',
                   'bg-brand text-on-brand hover:bg-brand-hover',
                   'transition-colors'
                 )}
@@ -580,4 +587,3 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
     </div>
   );
 };
-
