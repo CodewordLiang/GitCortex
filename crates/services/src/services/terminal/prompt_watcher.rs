@@ -56,6 +56,21 @@ const UNEXPECTED_CHANGES_CONTEXT_MAX_AGE_SECS: u64 = 12;
 /// Max age for line-by-line Claude bypass prompt context.
 const CLAUDE_BYPASS_CONTEXT_MAX_AGE_SECS: u64 = 8;
 
+/// Max age for "clean repo but waiting for next instruction" context.
+const HANDOFF_STALL_CONTEXT_MAX_AGE_SECS: u64 = 20;
+
+/// Max age for handoff reminder submit-assist context.
+const HANDOFF_SUBMIT_CONTEXT_MAX_AGE_SECS: u64 = 12;
+
+/// Auto-reply used when CLI reports clean workspace and asks what to do next.
+/// This prevents orchestrated terminals from idling forever instead of creating
+/// the required completion/handoff commit.
+const HANDOFF_STALL_CONTINUE_RESPONSE: &str = "Do not wait for additional instructions. \
+You must finish your current scoped terminal now. \
+If there are no file changes, create an empty commit with --allow-empty and include the exact \
+---METADATA--- block from your original instruction (workflow_id/task_id/terminal_id/terminal_order/status/next_action). \
+Then stop and hand off to the next terminal.\n";
+
 /// Legacy bypass-permissions toggle prompt (Codex-style TUI).
 /// Example: "bypass permissions on (shift+tab to cycle)"
 static BYPASS_PERMISSIONS_PROMPT_RE: Lazy<Regex> = Lazy::new(|| {
@@ -165,6 +180,90 @@ fn is_unexpected_changes_followup_prompt(text: &str) -> bool {
             || lower.contains("proceed"));
 
     has_cn_followup || has_en_followup
+}
+
+fn normalize_handoff_marker_text(text: &str) -> String {
+    text.to_ascii_lowercase()
+        .replace('\u{2019}', "'")
+        .replace('\u{2018}', "'")
+        .replace('\u{2013}', " ")
+        .replace('\u{2014}', " ")
+}
+
+fn has_handoff_stall_clean_marker(lower: &str) -> bool {
+    lower.contains("nothing to commit, working tree clean")
+        || lower.contains("working tree clean")
+        || lower.contains("working tree is clean")
+        || lower.contains("repository is clean")
+        || lower.contains("checkout is clean")
+        || lower.contains("no outstanding changes")
+        || lower.contains("no staged/unstaged diffs")
+        || lower.contains("no diff to review right now")
+        || lower.contains("git status clean")
+}
+
+fn has_handoff_stall_wait_marker(lower: &str) -> bool {
+    let asks_what_like_me_to = lower.contains("what")
+        && lower.contains("like me to")
+        && (lower.contains("work on")
+            || lower.contains("do next")
+            || lower.contains("implement")
+            || lower.contains("change"));
+    let asks_let_me_know = lower.contains("let me know")
+        && (lower.contains("work on")
+            || lower.contains("do next")
+            || lower.contains("implement")
+            || lower.contains("change"));
+    let asks_share_what = lower.contains("share what")
+        && lower.contains("like me to")
+        && (lower.contains("work on") || lower.contains("implement") || lower.contains("change"));
+    let asks_proceed_next = lower.contains("how would you like to proceed next")
+        || (lower.contains("how would you like") && lower.contains("proceed next"))
+        || (lower.contains("would you like to proceed") && lower.contains("next"));
+
+    asks_what_like_me_to
+        || asks_let_me_know
+        || asks_share_what
+        || asks_proceed_next
+        || lower.contains("what would you like me to work on next")
+        || (lower.contains("could you clarify what") && lower.contains("work on next"))
+        || (lower.contains("could you clarify what") && lower.contains("work on first"))
+        || (lower.contains("what changes or task") && lower.contains("work on first"))
+        || (lower.contains("let me know what") && lower.contains("work on next"))
+        || (lower.contains("let me know what") && lower.contains("like me to do next"))
+        || (lower.contains("let me know") && lower.contains("work on"))
+        || (lower.contains("let me know") && lower.contains("do next"))
+        || (lower.contains("what") && lower.contains("like me to work on"))
+        || (lower.contains("what you") && lower.contains("like me to") && lower.contains("work on next"))
+        || lower.contains("share the changes you want me to make")
+        || lower.contains("what you'd like me to implement")
+        || lower.contains("what you would like me to implement")
+        || lower.contains("what changes you'd like me to implement")
+        || lower.contains("what changes you would like me to implement")
+        || lower.contains("what would you like me to do next")
+        || lower.contains("what you'd like me to do next")
+        || lower.contains("what you would like me to do next")
+}
+
+fn has_handoff_stall_scope_gap_marker(lower: &str) -> bool {
+    (lower.contains("specific requirements") && lower.contains("files to modify"))
+        || lower.contains("don't have any specific requirements")
+        || lower.contains("do not have any specific requirements")
+        || lower.contains("don't have a specific task yet")
+        || lower.contains("do not have a specific task yet")
+        || lower.contains("don't have a task yet")
+        || lower.contains("do not have a task yet")
+        || lower.contains("no further instructions were provided")
+        || lower.contains("no specific requirements")
+        || lower.contains("no actionable change")
+        || lower.contains("no actionable changes")
+}
+
+fn is_handoff_stall_prompt(text: &str) -> bool {
+    let lower = normalize_handoff_marker_text(text);
+    let has_wait = has_handoff_stall_wait_marker(&lower);
+    has_wait
+        && (has_handoff_stall_clean_marker(&lower) || has_handoff_stall_scope_gap_marker(&lower))
 }
 
 fn has_claude_bypass_mode_text(lower: &str) -> bool {
@@ -333,6 +432,53 @@ impl UnexpectedChangesContext {
     }
 }
 
+#[derive(Debug, Default)]
+struct HandoffStallContext {
+    saw_clean_marker: bool,
+    saw_wait_marker: bool,
+    saw_scope_gap_marker: bool,
+    last_updated: Option<Instant>,
+}
+
+impl HandoffStallContext {
+    fn observe(&mut self, text: &str) {
+        let lower = normalize_handoff_marker_text(text);
+        let mut touched = false;
+
+        if has_handoff_stall_clean_marker(&lower) && !self.saw_clean_marker {
+            self.saw_clean_marker = true;
+            touched = true;
+        }
+
+        if has_handoff_stall_wait_marker(&lower) && !self.saw_wait_marker {
+            self.saw_wait_marker = true;
+            touched = true;
+        }
+
+        if has_handoff_stall_scope_gap_marker(&lower) && !self.saw_scope_gap_marker {
+            self.saw_scope_gap_marker = true;
+            touched = true;
+        }
+
+        if touched {
+            self.last_updated = Some(Instant::now());
+        }
+    }
+
+    fn is_complete_and_recent(&self) -> bool {
+        if !((self.saw_clean_marker || self.saw_scope_gap_marker) && self.saw_wait_marker) {
+            return false;
+        }
+
+        self.last_updated
+            .is_some_and(|ts| ts.elapsed() <= Duration::from_secs(HANDOFF_STALL_CONTEXT_MAX_AGE_SECS))
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// State for a single watched terminal
 #[derive(Debug)]
 struct TerminalWatchState {
@@ -356,6 +502,11 @@ struct TerminalWatchState {
     claude_bypass_context: ClaudeBypassContext,
     /// Rolling context for line-by-line unexpected-changes follow-up prompts.
     unexpected_changes_context: UnexpectedChangesContext,
+    /// Rolling context for "clean workspace + waiting for next instruction".
+    handoff_stall_context: HandoffStallContext,
+    /// If handoff reminder text was injected while renderer was busy, send one
+    /// extra Enter on next bypass status-line to force submission.
+    pending_handoff_submit_at: Option<Instant>,
 }
 
 impl TerminalWatchState {
@@ -377,6 +528,8 @@ impl TerminalWatchState {
             last_detection: None,
             claude_bypass_context: ClaudeBypassContext::default(),
             unexpected_changes_context: UnexpectedChangesContext::default(),
+            handoff_stall_context: HandoffStallContext::default(),
+            pending_handoff_submit_at: None,
         }
     }
 
@@ -424,6 +577,8 @@ impl TerminalWatchState {
             self.detector.clear_buffer();
             self.claude_bypass_context.clear();
             self.unexpected_changes_context.clear();
+            self.handoff_stall_context.clear();
+            self.pending_handoff_submit_at = None;
         }
     }
 
@@ -449,6 +604,32 @@ impl TerminalWatchState {
 
     fn clear_unexpected_changes_context(&mut self) {
         self.unexpected_changes_context.clear();
+    }
+
+    fn observe_handoff_stall_context(&mut self, text: &str) {
+        self.handoff_stall_context.observe(text);
+    }
+
+    fn has_recent_handoff_stall_context(&self) -> bool {
+        self.handoff_stall_context.is_complete_and_recent()
+    }
+
+    fn clear_handoff_stall_context(&mut self) {
+        self.handoff_stall_context.clear();
+    }
+
+    fn mark_pending_handoff_submit(&mut self) {
+        self.pending_handoff_submit_at = Some(Instant::now());
+    }
+
+    fn should_force_handoff_submit(&self) -> bool {
+        self.pending_handoff_submit_at.is_some_and(|ts| {
+            ts.elapsed() <= Duration::from_secs(HANDOFF_SUBMIT_CONTEXT_MAX_AGE_SECS)
+        })
+    }
+
+    fn clear_pending_handoff_submit(&mut self) {
+        self.pending_handoff_submit_at = None;
     }
 }
 
@@ -727,6 +908,43 @@ impl PromptWatcher {
         true
     }
 
+    fn normalize_input_for_direct_write(input: &str) -> String {
+        let mut payload = input.to_string();
+        if payload.ends_with("\r\n") {
+            payload.truncate(payload.len() - 2);
+            payload.push('\r');
+            return payload;
+        }
+        if payload.ends_with('\n') {
+            payload.pop();
+            payload.push('\r');
+            return payload;
+        }
+        if payload.ends_with('\r') {
+            return payload;
+        }
+        payload.push('\r');
+        payload
+    }
+
+    fn build_handoff_stall_continue_response(
+        workflow_id: &str,
+        task_id: &str,
+        terminal_id: &str,
+    ) -> String {
+        format!(
+            "{HANDOFF_STALL_CONTINUE_RESPONSE}\n\
+Use this exact metadata mapping in the commit message (do not swap or leave blank):\n\
+---METADATA---\n\
+workflow_id: {workflow_id}\n\
+task_id: {task_id}\n\
+terminal_id: {terminal_id}\n\
+terminal_order: <copy from your original terminal instruction>\n\
+status: completed\n\
+next_action: handoff\n"
+        )
+    }
+
     async fn resolve_terminal_input_session_id(
         &self,
         terminal_id: &str,
@@ -798,6 +1016,7 @@ impl PromptWatcher {
         let normalized_output_lower = normalized_output.to_ascii_lowercase();
         state.observe_claude_bypass_context(&normalized_output_lower);
         state.observe_unexpected_changes_context(&normalized_output);
+        state.observe_handoff_stall_context(&normalized_output);
         let bypass_needs_enter_context = normalized_output_lower.contains("interrupted")
             || normalized_output_lower.contains("press ctrl-c again to exit");
         let has_claude_bypass_accept_context = is_claude_bypass_accept_prompt(&normalized_output)
@@ -806,6 +1025,38 @@ impl PromptWatcher {
         let has_unexpected_changes_followup_context =
             is_unexpected_changes_followup_prompt(&normalized_output)
                 || state.has_recent_unexpected_changes_context();
+        let has_handoff_stall_context = is_handoff_stall_prompt(&normalized_output)
+            || state.has_recent_handoff_stall_context();
+
+        if !state.should_debounce()
+            && state.should_force_handoff_submit()
+            && is_bypass_permissions_prompt(&normalized_output)
+        {
+            let decision = PromptDecision::auto_enter();
+            state.last_detection = Some(Instant::now());
+            state.state_machine.on_response_sent(decision.clone());
+            state.detector.clear_buffer();
+            state.clear_pending_handoff_submit();
+
+            let response_terminal_id = state.terminal_id.clone();
+            let response_session_id = state.session_id.clone();
+
+            tracing::info!(
+                terminal_id = %response_terminal_id,
+                session_id = %response_session_id,
+                "Detected bypass status-line after handoff reminder (chunk); sending extra Enter to submit queued input"
+            );
+
+            drop(terminals);
+            self.publish_terminal_input_with_active_session(
+                &response_terminal_id,
+                &response_session_id,
+                "\n",
+                Some(decision),
+            )
+            .await;
+            return;
+        }
 
         let has_any_claude_bypass_chunk_marker =
             has_claude_bypass_mode_text(&normalized_output_lower)
@@ -1054,14 +1305,116 @@ impl PromptWatcher {
                 );
 
                 drop(terminals);
-                self.message_bus
-                    .publish_terminal_input(
+                let direct_input =
+                    Self::normalize_input_for_direct_write(UNEXPECTED_CHANGES_CONTINUE_RESPONSE);
+                let sent_direct = self
+                    .try_direct_terminal_input(
+                        &response_terminal_id,
+                        &response_session_id,
+                        &direct_input,
+                    )
+                    .await;
+                if !sent_direct {
+                    tracing::warn!(
+                        terminal_id = %response_terminal_id,
+                        session_id = %response_session_id,
+                        "Direct PTY unexpected-changes auto-continue failed; falling back to message bus"
+                    );
+                    self.publish_terminal_input_with_active_session(
                         &response_terminal_id,
                         &response_session_id,
                         UNEXPECTED_CHANGES_CONTINUE_RESPONSE,
                         Some(decision),
                     )
                     .await;
+                }
+                return;
+            }
+        }
+
+        // Chunk-level fallback: some agents finish their checks and then ask for
+        // "what next?" instead of creating the required handoff commit.
+        // Auto-instruct them to execute the completion contract immediately.
+        if has_handoff_stall_context {
+            let handoff_continue_response = Self::build_handoff_stall_continue_response(
+                &state.workflow_id,
+                &state.task_id,
+                &state.terminal_id,
+            );
+            let decision = PromptDecision::LLMDecision {
+                response: handoff_continue_response.clone(),
+                reasoning:
+                    "Auto-continue terminal when it waits for next instruction after reporting clean workspace"
+                        .to_string(),
+                target_index: None,
+            };
+            let detected_prompt =
+                DetectedPrompt::new(PromptKind::Input, normalized_output.clone(), 0.95);
+
+            if !state.state_machine.should_process(&detected_prompt) {
+                tracing::debug!(
+                    terminal_id = %state.terminal_id,
+                    "Skipping duplicate chunk-level handoff-stall fallback injection"
+                );
+            } else {
+                state.last_detection = Some(Instant::now());
+                state.state_machine.on_prompt_detected(detected_prompt);
+                state.state_machine.on_response_sent(decision.clone());
+                state.detector.clear_buffer();
+                state.clear_handoff_stall_context();
+                let needs_immediate_submit = is_bypass_permissions_prompt(&normalized_output);
+                if needs_immediate_submit {
+                    state.clear_pending_handoff_submit();
+                } else {
+                    state.mark_pending_handoff_submit();
+                }
+
+                let response_terminal_id = state.terminal_id.clone();
+                let response_session_id = state.session_id.clone();
+
+                tracing::info!(
+                    terminal_id = %response_terminal_id,
+                    session_id = %response_session_id,
+                    "Detected handoff-stall prompt (chunk); sending completion-contract reminder"
+                );
+
+                drop(terminals);
+                let direct_input = Self::normalize_input_for_direct_write(&handoff_continue_response);
+                let sent_direct = self
+                    .try_direct_terminal_input(
+                        &response_terminal_id,
+                        &response_session_id,
+                        &direct_input,
+                    )
+                    .await;
+                if !sent_direct {
+                    tracing::warn!(
+                        terminal_id = %response_terminal_id,
+                        session_id = %response_session_id,
+                        "Direct PTY handoff-stall reminder failed (chunk mode); falling back to message bus"
+                    );
+                    self.publish_terminal_input_with_active_session(
+                        &response_terminal_id,
+                        &response_session_id,
+                        &handoff_continue_response,
+                        Some(decision),
+                    )
+                    .await;
+                }
+                if needs_immediate_submit {
+                    tracing::info!(
+                        terminal_id = %response_terminal_id,
+                        session_id = %response_session_id,
+                        "Handoff reminder injected while bypass status-line already visible (chunk); sending immediate Enter to submit"
+                    );
+                    self.publish_terminal_input_with_active_session(
+                        &response_terminal_id,
+                        &response_session_id,
+                        "\n",
+                        Some(PromptDecision::auto_enter()),
+                    )
+                    .await;
+                }
                 return;
             }
         }
@@ -1110,6 +1463,7 @@ impl PromptWatcher {
                     .await;
                 return;
             }
+
         }
 
         // Process each line
@@ -1118,6 +1472,7 @@ impl PromptWatcher {
             let normalized_line_lower = normalized_line.to_ascii_lowercase();
             state.observe_claude_bypass_context(&normalized_line_lower);
             state.observe_unexpected_changes_context(&normalized_line);
+            state.observe_handoff_stall_context(&normalized_line);
 
             // Claude custom API key prompt fallback:
             // force "Yes" selection via ArrowUp + Enter.
@@ -1279,6 +1634,37 @@ impl PromptWatcher {
                 return;
             }
 
+            if !state.should_debounce()
+                && state.should_force_handoff_submit()
+                && is_bypass_permissions_prompt(&normalized_line)
+            {
+                let decision = PromptDecision::auto_enter();
+
+                state.last_detection = Some(Instant::now());
+                state.state_machine.on_response_sent(decision.clone());
+                state.detector.clear_buffer();
+                state.clear_pending_handoff_submit();
+
+                let response_terminal_id = state.terminal_id.clone();
+                let response_session_id = state.session_id.clone();
+
+                tracing::info!(
+                    terminal_id = %response_terminal_id,
+                    session_id = %response_session_id,
+                    "Detected bypass status-line after handoff reminder; sending extra Enter to submit queued input"
+                );
+
+                drop(terminals);
+                self.publish_terminal_input_with_active_session(
+                    &response_terminal_id,
+                    &response_session_id,
+                    "\n",
+                    Some(decision),
+                )
+                .await;
+                return;
+            }
+
             // Notepad fallback in line-by-line mode.
             if state.auto_confirm && !state.should_debounce() && is_notepad_prompt(&normalized_line)
             {
@@ -1363,14 +1749,117 @@ impl PromptWatcher {
                 );
 
                 drop(terminals);
-                self.message_bus
-                    .publish_terminal_input(
+                let direct_input =
+                    Self::normalize_input_for_direct_write(UNEXPECTED_CHANGES_CONTINUE_RESPONSE);
+                let sent_direct = self
+                    .try_direct_terminal_input(
+                        &response_terminal_id,
+                        &response_session_id,
+                        &direct_input,
+                    )
+                    .await;
+                if !sent_direct {
+                    tracing::warn!(
+                        terminal_id = %response_terminal_id,
+                        session_id = %response_session_id,
+                        "Direct PTY unexpected-changes auto-continue failed (line mode); falling back to message bus"
+                    );
+                    self.publish_terminal_input_with_active_session(
                         &response_terminal_id,
                         &response_session_id,
                         UNEXPECTED_CHANGES_CONTINUE_RESPONSE,
                         Some(decision),
                     )
                     .await;
+                }
+                return;
+            }
+
+            // Line-level fallback for clean-workspace "what next?" stalls.
+            let has_handoff_stall_line_context = is_handoff_stall_prompt(&normalized_line)
+                || state.has_recent_handoff_stall_context();
+            if has_handoff_stall_line_context {
+                let handoff_continue_response = Self::build_handoff_stall_continue_response(
+                    &state.workflow_id,
+                    &state.task_id,
+                    &state.terminal_id,
+                );
+                let decision = PromptDecision::LLMDecision {
+                    response: handoff_continue_response.clone(),
+                    reasoning:
+                        "Auto-continue terminal when it waits for next instruction after reporting clean workspace"
+                            .to_string(),
+                    target_index: None,
+                };
+                let detected_prompt =
+                    DetectedPrompt::new(PromptKind::Input, normalized_line.clone(), 0.95);
+
+                if !state.state_machine.should_process(&detected_prompt) {
+                    tracing::debug!(
+                        terminal_id = %state.terminal_id,
+                        "Skipping duplicate line-level handoff-stall fallback injection"
+                    );
+                    continue;
+                }
+
+                state.last_detection = Some(Instant::now());
+                state.state_machine.on_prompt_detected(detected_prompt);
+                state.state_machine.on_response_sent(decision.clone());
+                state.detector.clear_buffer();
+                state.clear_handoff_stall_context();
+                let needs_immediate_submit = is_bypass_permissions_prompt(&normalized_line);
+                if needs_immediate_submit {
+                    state.clear_pending_handoff_submit();
+                } else {
+                    state.mark_pending_handoff_submit();
+                }
+
+                let response_terminal_id = state.terminal_id.clone();
+                let response_session_id = state.session_id.clone();
+
+                tracing::info!(
+                    terminal_id = %response_terminal_id,
+                    session_id = %response_session_id,
+                    "Detected handoff-stall prompt (line); sending completion-contract reminder"
+                );
+
+                drop(terminals);
+                let direct_input = Self::normalize_input_for_direct_write(&handoff_continue_response);
+                let sent_direct = self
+                    .try_direct_terminal_input(
+                        &response_terminal_id,
+                        &response_session_id,
+                        &direct_input,
+                    )
+                    .await;
+                if !sent_direct {
+                    tracing::warn!(
+                        terminal_id = %response_terminal_id,
+                        session_id = %response_session_id,
+                        "Direct PTY handoff-stall reminder failed (line mode); falling back to message bus"
+                    );
+                    self.publish_terminal_input_with_active_session(
+                        &response_terminal_id,
+                        &response_session_id,
+                        &handoff_continue_response,
+                        Some(decision),
+                    )
+                    .await;
+                }
+                if needs_immediate_submit {
+                    tracing::info!(
+                        terminal_id = %response_terminal_id,
+                        session_id = %response_session_id,
+                        "Handoff reminder injected while bypass status-line already visible (line); sending immediate Enter to submit"
+                    );
+                    self.publish_terminal_input_with_active_session(
+                        &response_terminal_id,
+                        &response_session_id,
+                        "\n",
+                        Some(PromptDecision::auto_enter()),
+                    )
+                    .await;
+                }
                 return;
             }
 
@@ -1489,6 +1978,8 @@ impl PromptWatcher {
             state.state_machine.on_response_sent(decision);
             state.detector.clear_buffer();
             state.clear_claude_bypass_context();
+            state.clear_handoff_stall_context();
+            state.clear_pending_handoff_submit();
         }
     }
 
@@ -1511,6 +2002,8 @@ impl PromptWatcher {
             state.state_machine.reset();
             state.detector.clear_buffer();
             state.clear_claude_bypass_context();
+            state.clear_handoff_stall_context();
+            state.clear_pending_handoff_submit();
         }
     }
 
@@ -2174,6 +2667,533 @@ Enter to confirm 路 Esc to cancel
     }
 
     #[tokio::test]
+    async fn test_process_output_handoff_stall_auto_continues() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "git status clean; recent commits shown. No diff to review right now. What would you like me to work on next?",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(input.contains(HANDOFF_STALL_CONTINUE_RESPONSE));
+                assert!(input.contains("workflow_id: workflow-1"));
+                assert!(input.contains("task_id: task-1"));
+                assert!(input.contains("terminal_id: term-1"));
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_handoff_stall_let_me_know_do_next_variant_auto_continue() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "On branch main; nothing to commit, working tree clean. All clean\u{2014}no changes to commit and no further instructions were provided. Let me know what you\u{2019}d like me to do next.",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(input.contains(HANDOFF_STALL_CONTINUE_RESPONSE));
+                assert!(input.contains("workflow_id: workflow-1"));
+                assert!(input.contains("task_id: task-1"));
+                assert!(input.contains("terminal_id: term-1"));
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_handoff_stall_share_implement_change_variant_auto_continue() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "On branch main; nothing to commit, working tree clean. I\u{2019}m ready to start. Could you share what you\u{2019}d like me to implement or change?",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(input.contains(HANDOFF_STALL_CONTINUE_RESPONSE));
+                assert!(input.contains("workflow_id: workflow-1"));
+                assert!(input.contains("task_id: task-1"));
+                assert!(input.contains("terminal_id: term-1"));
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_handoff_stall_proceed_next_variant_auto_continue() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "On branch main; nothing to commit, working tree clean. How would you like to proceed next?",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(input.contains(HANDOFF_STALL_CONTINUE_RESPONSE));
+                assert!(input.contains("workflow_id: workflow-1"));
+                assert!(input.contains("task_id: task-1"));
+                assert!(input.contains("terminal_id: term-1"));
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_handoff_stall_missing_task_variant_auto_continue() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "I'm ready to jump in, but I don't have a specific task yet. Could you clarify what you'd like me to work on?",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(input.contains(HANDOFF_STALL_CONTINUE_RESPONSE));
+                assert!(input.contains("workflow_id: workflow-1"));
+                assert!(input.contains("task_id: task-1"));
+                assert!(input.contains("terminal_id: term-1"));
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_handoff_stall_with_bypass_status_line_sends_immediate_enter() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "On branch main; nothing to commit, working tree clean. What would you like me to work on next?\n⏵⏵ bypass permissions on (shift+tab to cycle)",
+            )
+            .await;
+
+        let first = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected first terminal input broadcast")
+            .expect("broadcast channel should be open");
+        let second = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected second terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match first {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(input.contains(HANDOFF_STALL_CONTINUE_RESPONSE));
+                assert!(input.contains("workflow_id: workflow-1"));
+                assert!(input.contains("task_id: task-1"));
+                assert!(input.contains("terminal_id: term-1"));
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected first TerminalInput event, got: {other:?}"),
+        }
+
+        match second {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert_eq!(input, "\n");
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::AutoConfirm { .. })
+                ));
+            }
+            other => panic!("expected second TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_handoff_stall_cn_split_lines_auto_continue() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    false,
+                ),
+            );
+        }
+
+        watcher
+            .process_output("term-1", "On branch main; nothing to commit, working tree clean")
+            .await;
+
+        let first_poll = tokio::time::timeout(Duration::from_millis(80), broadcast_rx.recv()).await;
+        assert!(
+            first_poll.is_err(),
+            "first fragment should not auto-send yet"
+        );
+
+        watcher
+            .process_output(
+                "term-1",
+                "Repository is clean. Please let me know what you'd like me to work on next.",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(input.contains(HANDOFF_STALL_CONTINUE_RESPONSE));
+                assert!(input.contains("workflow_id: workflow-1"));
+                assert!(input.contains("task_id: task-1"));
+                assert!(input.contains("terminal_id: term-1"));
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_handoff_stall_clarify_variant_auto_continue() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "On branch main; nothing to commit, working tree clean. I'm ready to start. Could you clarify what you'd like me to work on next?",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(input.contains(HANDOFF_STALL_CONTINUE_RESPONSE));
+                assert!(input.contains("workflow_id: workflow-1"));
+                assert!(input.contains("task_id: task-1"));
+                assert!(input.contains("terminal_id: term-1"));
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_handoff_stall_missing_scope_variant_auto_continue() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "I see the instruction to start implementing, but I don't have any specific requirements or files to modify yet. Could you clarify what changes or task you'd like me to work on first?",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(input.contains(HANDOFF_STALL_CONTINUE_RESPONSE));
+                assert!(input.contains("workflow_id: workflow-1"));
+                assert!(input.contains("task_id: task-1"));
+                assert!(input.contains("terminal_id: term-1"));
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_process_output_codex_apply_patch_confirmation_auto_yes() {
         let message_bus = Arc::new(MessageBus::new(100));
         let process_manager = Arc::new(ProcessManager::new());
@@ -2367,6 +3387,57 @@ Enter to confirm 路 Esc to cancel
             event.is_err(),
             "status-line bypass indicator should not inject Enter without confirmation context"
         );
+    }
+
+    #[tokio::test]
+    async fn test_process_output_bypass_status_line_auto_enters_when_handoff_submit_pending() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            let mut state = TerminalWatchState::new(
+                "term-1".to_string(),
+                "workflow-1".to_string(),
+                "task-1".to_string(),
+                "session-1".to_string(),
+                true,
+            );
+            state.mark_pending_handoff_submit();
+            terminals.insert("term-1".to_string(), state);
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "bypass permissions on (shift+tab to cycle) ctrl+g to edit in Notepad",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert_eq!(input, "\n");
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::AutoConfirm { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
     }
 
     #[tokio::test]
