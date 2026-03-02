@@ -56,6 +56,15 @@ const UNEXPECTED_CHANGES_CONTEXT_MAX_AGE_SECS: u64 = 12;
 /// Max age for line-by-line Claude bypass prompt context.
 const CLAUDE_BYPASS_CONTEXT_MAX_AGE_SECS: u64 = 8;
 
+/// Delay before re-sending Claude bypass accept when menu is still visible.
+const CLAUDE_BYPASS_ACCEPT_RETRY_DELAY_MS: u64 = 900;
+
+/// Max age for pending Claude bypass accept retry state.
+const CLAUDE_BYPASS_ACCEPT_RETRY_MAX_AGE_SECS: u64 = 8;
+
+/// Limit retry count to avoid repeated accidental injections.
+const CLAUDE_BYPASS_ACCEPT_MAX_RETRIES: u8 = 1;
+
 /// Max age for "clean repo but waiting for next instruction" context.
 const HANDOFF_STALL_CONTEXT_MAX_AGE_SECS: u64 = 20;
 
@@ -296,14 +305,15 @@ fn has_claude_bypass_confirm_hint_text(lower: &str) -> bool {
     lower.contains("enter to confirm") || (lower.contains("enter") && lower.contains("confirm"))
 }
 
+fn has_claude_bypass_accept_menu_text(lower: &str) -> bool {
+    has_claude_bypass_mode_text(lower)
+        && has_claude_bypass_no_exit_text(lower)
+        && has_claude_bypass_yes_accept_text(lower)
+}
+
 fn is_claude_bypass_accept_prompt(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    let has_mode = has_claude_bypass_mode_text(&lower);
-    let has_no_exit = has_claude_bypass_no_exit_text(&lower);
-    let has_yes_accept = has_claude_bypass_yes_accept_text(&lower);
-    let has_confirm_hint = has_claude_bypass_confirm_hint_text(&lower);
-
-    has_mode && has_no_exit && has_yes_accept && has_confirm_hint
+    has_claude_bypass_accept_menu_text(&lower)
 }
 
 fn claude_bypass_accept_response(_text: &str) -> (&'static str, &'static str, &'static str) {
@@ -315,6 +325,13 @@ fn claude_bypass_accept_response(_text: &str) -> (&'static str, &'static str, &'
 }
 
 fn is_claude_bypass_accept_context_line(lower: &str) -> bool {
+    has_claude_bypass_mode_text(lower)
+        || has_claude_bypass_no_exit_text(lower)
+        || has_claude_bypass_yes_accept_text(lower)
+        || has_claude_bypass_confirm_hint_text(lower)
+}
+
+fn has_any_claude_bypass_marker(lower: &str) -> bool {
     has_claude_bypass_mode_text(lower)
         || has_claude_bypass_no_exit_text(lower)
         || has_claude_bypass_yes_accept_text(lower)
@@ -364,7 +381,7 @@ impl ClaudeBypassContext {
     }
 
     fn is_complete_and_recent(&self) -> bool {
-        if !(self.saw_mode && self.saw_no_exit && self.saw_yes_accept && self.saw_confirm_hint) {
+        if !(self.saw_mode && self.saw_no_exit && self.saw_yes_accept) {
             return false;
         }
 
@@ -522,6 +539,11 @@ struct TerminalWatchState {
     /// If handoff reminder text was injected while renderer was busy, send one
     /// extra Enter on next bypass status-line to force submission.
     pending_handoff_submit_at: Option<Instant>,
+    /// Timestamp of initial Claude bypass auto-accept send, used for one retry
+    /// if the same menu remains visible.
+    pending_claude_bypass_retry_since: Option<Instant>,
+    /// Number of Claude bypass retries sent for current prompt.
+    claude_bypass_retry_count: u8,
 }
 
 impl TerminalWatchState {
@@ -545,6 +567,8 @@ impl TerminalWatchState {
             unexpected_changes_context: UnexpectedChangesContext::default(),
             handoff_stall_context: HandoffStallContext::default(),
             pending_handoff_submit_at: None,
+            pending_claude_bypass_retry_since: None,
+            claude_bypass_retry_count: 0,
         }
     }
 
@@ -594,6 +618,7 @@ impl TerminalWatchState {
             self.unexpected_changes_context.clear();
             self.handoff_stall_context.clear();
             self.pending_handoff_submit_at = None;
+            self.clear_claude_bypass_retry_state();
         }
     }
 
@@ -645,6 +670,33 @@ impl TerminalWatchState {
 
     fn clear_pending_handoff_submit(&mut self) {
         self.pending_handoff_submit_at = None;
+    }
+
+    fn mark_claude_bypass_accept_sent(&mut self) {
+        self.pending_claude_bypass_retry_since = Some(Instant::now());
+        self.claude_bypass_retry_count = 0;
+    }
+
+    fn should_retry_claude_bypass_accept(&self) -> bool {
+        let Some(since) = self.pending_claude_bypass_retry_since else {
+            return false;
+        };
+        if self.claude_bypass_retry_count >= CLAUDE_BYPASS_ACCEPT_MAX_RETRIES {
+            return false;
+        }
+        let elapsed = since.elapsed();
+        elapsed >= Duration::from_millis(CLAUDE_BYPASS_ACCEPT_RETRY_DELAY_MS)
+            && elapsed <= Duration::from_secs(CLAUDE_BYPASS_ACCEPT_RETRY_MAX_AGE_SECS)
+    }
+
+    fn mark_claude_bypass_retry_sent(&mut self) {
+        self.claude_bypass_retry_count = self.claude_bypass_retry_count.saturating_add(1);
+        self.pending_claude_bypass_retry_since = None;
+    }
+
+    fn clear_claude_bypass_retry_state(&mut self) {
+        self.pending_claude_bypass_retry_since = None;
+        self.claude_bypass_retry_count = 0;
     }
 }
 
@@ -1002,6 +1054,37 @@ next_action: handoff\n"
             .await;
     }
 
+    async fn send_claude_bypass_accept_with_fallback(
+        &self,
+        terminal_id: &str,
+        session_id: &str,
+        response: &str,
+        decision: PromptDecision,
+        mode: &'static str,
+        is_retry: bool,
+    ) {
+        let direct_input = Self::normalize_input_for_direct_write(response);
+        let sent_direct = self
+            .try_direct_terminal_input(terminal_id, session_id, &direct_input)
+            .await;
+        if !sent_direct {
+            tracing::warn!(
+                terminal_id = %terminal_id,
+                session_id = %session_id,
+                mode,
+                is_retry,
+                "Direct PTY Claude bypass auto-accept failed; falling back to message bus"
+            );
+            self.publish_terminal_input_with_active_session(
+                terminal_id,
+                session_id,
+                response,
+                Some(decision),
+            )
+            .await;
+        }
+    }
+
     /// Process PTY output for a terminal
     ///
     /// Call this method with each line of PTY output.
@@ -1074,10 +1157,7 @@ next_action: handoff\n"
         }
 
         let has_any_claude_bypass_chunk_marker =
-            has_claude_bypass_mode_text(&normalized_output_lower)
-                || has_claude_bypass_no_exit_text(&normalized_output_lower)
-                || has_claude_bypass_yes_accept_text(&normalized_output_lower)
-                || has_claude_bypass_confirm_hint_text(&normalized_output_lower);
+            has_any_claude_bypass_marker(&normalized_output_lower);
         if state.auto_confirm && has_any_claude_bypass_chunk_marker {
             tracing::info!(
                 terminal_id = %state.terminal_id,
@@ -1090,6 +1170,46 @@ next_action: handoff\n"
                 chunk_len = normalized_output.len(),
                 "Observed Claude bypass prompt markers in chunk"
             );
+        }
+
+        if state.auto_confirm
+            && !state.should_debounce()
+            && has_any_claude_bypass_chunk_marker
+            && state.should_retry_claude_bypass_accept()
+        {
+            let (response, action, reasoning) = claude_bypass_accept_response(&normalized_output);
+            let decision = PromptDecision::LLMDecision {
+                response: response.to_string(),
+                reasoning: format!("{reasoning} (retry once because prompt is still visible)"),
+                target_index: Some(1),
+            };
+            state.last_detection = Some(Instant::now());
+            state.state_machine.on_response_sent(decision.clone());
+            state.detector.clear_buffer();
+            state.clear_claude_bypass_context();
+            state.mark_claude_bypass_retry_sent();
+
+            let response_terminal_id = state.terminal_id.clone();
+            let response_session_id = state.session_id.clone();
+
+            tracing::info!(
+                terminal_id = %response_terminal_id,
+                session_id = %response_session_id,
+                action = %action,
+                "Claude bypass prompt still visible after auto-accept; retrying once (chunk)"
+            );
+
+            drop(terminals);
+            self.send_claude_bypass_accept_with_fallback(
+                &response_terminal_id,
+                &response_session_id,
+                response,
+                decision,
+                "chunk",
+                true,
+            )
+            .await;
+            return;
         }
 
         // Chunk-level fallback: Claude bypass-permissions acceptance prompt.
@@ -1116,6 +1236,7 @@ next_action: handoff\n"
                 state.state_machine.on_response_sent(decision.clone());
                 state.detector.clear_buffer();
                 state.clear_claude_bypass_context();
+                state.mark_claude_bypass_accept_sent();
 
                 let response_terminal_id = state.terminal_id.clone();
                 let response_session_id = state.session_id.clone();
@@ -1128,27 +1249,15 @@ next_action: handoff\n"
                 );
 
                 drop(terminals);
-                let sent_direct = self
-                    .try_direct_terminal_input(
-                        &response_terminal_id,
-                        &response_session_id,
-                        response,
-                    )
-                    .await;
-                if !sent_direct {
-                    tracing::warn!(
-                        terminal_id = %response_terminal_id,
-                        session_id = %response_session_id,
-                        "Direct PTY Claude bypass auto-accept failed; falling back to message bus"
-                    );
-                    self.publish_terminal_input_with_active_session(
-                        &response_terminal_id,
-                        &response_session_id,
-                        response,
-                        Some(decision),
-                    )
-                    .await;
-                }
+                self.send_claude_bypass_accept_with_fallback(
+                    &response_terminal_id,
+                    &response_session_id,
+                    response,
+                    decision,
+                    "chunk",
+                    false,
+                )
+                .await;
                 return;
             }
         }
@@ -1485,6 +1594,8 @@ next_action: handoff\n"
         for line in output.lines() {
             let normalized_line = normalize_text_for_detection(line);
             let normalized_line_lower = normalized_line.to_ascii_lowercase();
+            let has_any_claude_bypass_line_marker =
+                has_any_claude_bypass_marker(&normalized_line_lower);
             state.observe_claude_bypass_context(&normalized_line_lower);
             state.observe_unexpected_changes_context(&normalized_line);
             state.observe_handoff_stall_context(&normalized_line);
@@ -1540,6 +1651,46 @@ next_action: handoff\n"
                 return;
             }
 
+            if state.auto_confirm
+                && !state.should_debounce()
+                && has_any_claude_bypass_line_marker
+                && state.should_retry_claude_bypass_accept()
+            {
+                let (response, action, reasoning) = claude_bypass_accept_response(&normalized_line);
+                let decision = PromptDecision::LLMDecision {
+                    response: response.to_string(),
+                    reasoning: format!("{reasoning} (retry once because prompt is still visible)"),
+                    target_index: Some(1),
+                };
+                state.last_detection = Some(Instant::now());
+                state.state_machine.on_response_sent(decision.clone());
+                state.detector.clear_buffer();
+                state.clear_claude_bypass_context();
+                state.mark_claude_bypass_retry_sent();
+
+                let response_terminal_id = state.terminal_id.clone();
+                let response_session_id = state.session_id.clone();
+
+                tracing::info!(
+                    terminal_id = %response_terminal_id,
+                    session_id = %response_session_id,
+                    action = %action,
+                    "Claude bypass prompt still visible after auto-accept; retrying once (line)"
+                );
+
+                drop(terminals);
+                self.send_claude_bypass_accept_with_fallback(
+                    &response_terminal_id,
+                    &response_session_id,
+                    response,
+                    decision,
+                    "line",
+                    true,
+                )
+                .await;
+                return;
+            }
+
             // Line-level fallback for Claude bypass-permissions acceptance prompt.
             // This handles frames where each render only emits a single line.
             let has_claude_bypass_line_context = is_claude_bypass_accept_prompt(&normalized_line)
@@ -1568,6 +1719,7 @@ next_action: handoff\n"
                 state.state_machine.on_response_sent(decision.clone());
                 state.detector.clear_buffer();
                 state.clear_claude_bypass_context();
+                state.mark_claude_bypass_accept_sent();
 
                 let response_terminal_id = state.terminal_id.clone();
                 let response_session_id = state.session_id.clone();
@@ -1580,27 +1732,15 @@ next_action: handoff\n"
                 );
 
                 drop(terminals);
-                let sent_direct = self
-                    .try_direct_terminal_input(
-                        &response_terminal_id,
-                        &response_session_id,
-                        response,
-                    )
-                    .await;
-                if !sent_direct {
-                    tracing::warn!(
-                        terminal_id = %response_terminal_id,
-                        session_id = %response_session_id,
-                        "Direct PTY Claude bypass auto-accept failed (line mode); falling back to message bus"
-                    );
-                    self.publish_terminal_input_with_active_session(
-                        &response_terminal_id,
-                        &response_session_id,
-                        response,
-                        Some(decision),
-                    )
-                    .await;
-                }
+                self.send_claude_bypass_accept_with_fallback(
+                    &response_terminal_id,
+                    &response_session_id,
+                    response,
+                    decision,
+                    "line",
+                    false,
+                )
+                .await;
                 return;
             }
 
@@ -2358,6 +2498,62 @@ Enter to confirm 路 Esc to cancel
     }
 
     #[tokio::test]
+    async fn test_process_output_claude_bypass_permissions_prompt_without_confirm_hint_auto_selects_yes_accept()
+     {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        // Newer Claude prompt variants may omit the explicit
+        // "Enter to confirm" footer.
+        let prompt = r#"
+WARNING: Claude Code running in Bypass Permissions mode
+1. No, exit
+2. Yes, I accept
+"#;
+
+        watcher.process_output("term-1", prompt).await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert_eq!(input, "2\r");
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_process_output_claude_bypass_prompt_accepts_compact_no_space_variants() {
         let message_bus = Arc::new(MessageBus::new(100));
         let process_manager = Arc::new(ProcessManager::new());
@@ -2411,6 +2607,85 @@ Enter to confirm 路 Esc to cancel
             }
             other => panic!("expected TerminalInput event, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_claude_bypass_prompt_retries_once_when_still_visible() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        let prompt_single_line =
+            "WARNING: Claude Code running in Bypass Permissions mode 1. No, exit 2. Yes, I accept";
+
+        watcher.process_output("term-1", prompt_single_line).await;
+
+        let first_event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected first terminal input broadcast")
+            .expect("broadcast channel should be open");
+        match first_event {
+            BusMessage::TerminalInput { input, .. } => assert_eq!(input, "2\r"),
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            let state = terminals
+                .get_mut("term-1")
+                .expect("terminal state should exist");
+            state.last_detection =
+                Some(Instant::now() - Duration::from_millis(PROMPT_DEBOUNCE_MS + 1));
+            state.pending_claude_bypass_retry_since = Some(
+                Instant::now() - Duration::from_millis(CLAUDE_BYPASS_ACCEPT_RETRY_DELAY_MS + 1),
+            );
+        }
+
+        watcher.process_output("term-1", prompt_single_line).await;
+
+        let second_event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected retry terminal input broadcast")
+            .expect("broadcast channel should be open");
+        match second_event {
+            BusMessage::TerminalInput { input, .. } => assert_eq!(input, "2\r"),
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            let state = terminals
+                .get_mut("term-1")
+                .expect("terminal state should exist");
+            state.last_detection =
+                Some(Instant::now() - Duration::from_millis(PROMPT_DEBOUNCE_MS + 1));
+            state.pending_claude_bypass_retry_since = Some(
+                Instant::now() - Duration::from_millis(CLAUDE_BYPASS_ACCEPT_RETRY_DELAY_MS + 1),
+            );
+        }
+
+        watcher.process_output("term-1", prompt_single_line).await;
+
+        let third_event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv()).await;
+        assert!(
+            third_event.is_err(),
+            "Claude bypass retry should only fire once while prompt remains visible"
+        );
     }
 
     #[tokio::test]

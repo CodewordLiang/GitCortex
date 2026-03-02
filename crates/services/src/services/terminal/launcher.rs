@@ -436,6 +436,16 @@ impl TerminalLauncher {
                                 )
                                 .await
                             {
+                                if terminal.auto_confirm {
+                                    return self
+                                        .rollback_launch_after_spawn(
+                                            &terminal_id,
+                                            format!(
+                                                "Prompt watcher registration failed for auto-confirm terminal: {e}"
+                                            ),
+                                        )
+                                        .await;
+                                }
                                 tracing::warn!(
                                     terminal_id = %terminal_id,
                                     workflow_id = %workflow_id,
@@ -444,6 +454,15 @@ impl TerminalLauncher {
                                     "Failed to register prompt watcher"
                                 );
                             } else if !watcher.is_registered(&terminal_id).await {
+                                if terminal.auto_confirm {
+                                    return self
+                                        .rollback_launch_after_spawn(
+                                            &terminal_id,
+                                            "Prompt watcher registration verification failed for auto-confirm terminal"
+                                                .to_string(),
+                                        )
+                                        .await;
+                                }
                                 tracing::warn!(
                                     terminal_id = %terminal_id,
                                     workflow_id = %workflow_id,
@@ -461,6 +480,15 @@ impl TerminalLauncher {
                             }
                         }
                         Ok(None) => {
+                            if terminal.auto_confirm {
+                                return self
+                                    .rollback_launch_after_spawn(
+                                        &terminal_id,
+                                        "Could not resolve workflow_id for prompt watcher registration on auto-confirm terminal"
+                                            .to_string(),
+                                    )
+                                    .await;
+                            }
                             tracing::warn!(
                                 terminal_id = %terminal_id,
                                 workflow_task_id = %terminal.workflow_task_id,
@@ -469,6 +497,16 @@ impl TerminalLauncher {
                             );
                         }
                         Err(e) => {
+                            if terminal.auto_confirm {
+                                return self
+                                    .rollback_launch_after_spawn(
+                                        &terminal_id,
+                                        format!(
+                                            "Failed to resolve prompt watcher workflow binding for auto-confirm terminal: {e}"
+                                        ),
+                                    )
+                                    .await;
+                            }
                             tracing::warn!(
                                 terminal_id = %terminal_id,
                                 workflow_task_id = %terminal.workflow_task_id,
