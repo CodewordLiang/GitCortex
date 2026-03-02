@@ -80,6 +80,17 @@ If there are no file changes, create an empty commit with --allow-empty and incl
 ---METADATA--- block from your original instruction (workflow_id/task_id/terminal_id/terminal_order/status/next_action). \
 Then stop and hand off to the next terminal.\n";
 
+/// Auto-reply used when Claude reports the configured model is unavailable.
+/// This prompt is common on custom gateways when a model alias is invalid or
+/// the provided API key lacks access to that model.
+const CLAUDE_MODEL_UNAVAILABLE_RECOVERY_INPUT: &str = "/model";
+
+/// Decision rationale text for model-unavailable auto-recovery.
+const CLAUDE_MODEL_UNAVAILABLE_CONTINUE_RESPONSE: &str = "The selected model is unavailable for this endpoint. \
+Run /model now, pick an available model from the presented list (first/default option is acceptable), \
+then continue this same task immediately and complete the required handoff commit. \
+Do not wait for additional instructions.\n";
+
 /// Legacy bypass-permissions toggle prompt (Codex-style TUI).
 /// Example: "bypass permissions on (shift+tab to cycle)"
 static BYPASS_PERMISSIONS_PROMPT_RE: Lazy<Regex> = Lazy::new(|| {
@@ -147,6 +158,26 @@ fn is_codex_apply_patch_confirmation(text: &str) -> bool {
 
 fn is_claude_custom_api_key_prompt(text: &str) -> bool {
     CLAUDE_CUSTOM_API_KEY_PROMPT_RE.is_match(text)
+}
+
+fn is_claude_model_unavailable_prompt(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let has_issue_marker = lower.contains("issue with the selected model")
+        || (lower.contains("selected model")
+            && (lower.contains("may not exist")
+                || lower.contains("may not have access")
+                || lower.contains("does not exist")
+                || lower.contains("don't have access")));
+    let has_model_action_hint = lower.contains("run /model")
+        || lower.contains("use /model")
+        || lower.contains("pick a different model")
+        || lower.contains("choose a different model");
+    // OpenAI-compatible gateways may return Claude model outages as 503 with
+    // `model_not_found` / `No available channel for model ...`.
+    let has_gateway_model_not_found_marker =
+        lower.contains("model_not_found") || lower.contains("no available channel for model");
+
+    (has_issue_marker && has_model_action_hint) || has_gateway_model_not_found_marker
 }
 
 fn is_notepad_prompt(text: &str) -> bool {
@@ -1305,6 +1336,84 @@ next_action: handoff\n"
             }
         }
 
+        // Chunk-level fallback: Claude can report the configured model as
+        // unavailable on custom endpoints and then idle forever. Auto-instruct
+        // the agent to switch model via /model and continue.
+        if state.auto_confirm
+            && !state.should_debounce()
+            && is_claude_model_unavailable_prompt(&normalized_output)
+        {
+            let decision = PromptDecision::LLMDecision {
+                response: CLAUDE_MODEL_UNAVAILABLE_CONTINUE_RESPONSE.to_string(),
+                reasoning:
+                    "Auto-recover Claude terminal when configured model is unavailable on current endpoint"
+                        .to_string(),
+                target_index: None,
+            };
+            let detected_prompt =
+                DetectedPrompt::new(PromptKind::Input, normalized_output.clone(), 0.95);
+
+            if !state.state_machine.should_process(&detected_prompt) {
+                tracing::debug!(
+                    terminal_id = %state.terminal_id,
+                    "Skipping duplicate chunk-level Claude model-unavailable fallback injection"
+                );
+            } else {
+                state.last_detection = Some(Instant::now());
+                state.state_machine.on_prompt_detected(detected_prompt);
+                state.state_machine.on_response_sent(decision.clone());
+                state.detector.clear_buffer();
+
+                let response_terminal_id = state.terminal_id.clone();
+                let response_session_id = state.session_id.clone();
+
+                tracing::info!(
+                    terminal_id = %response_terminal_id,
+                    session_id = %response_session_id,
+                    "Detected Claude model-unavailable prompt (chunk); sending /model recovery command"
+                );
+
+                drop(terminals);
+                let direct_input = Self::normalize_input_for_direct_write(
+                    CLAUDE_MODEL_UNAVAILABLE_RECOVERY_INPUT,
+                );
+                let sent_direct = self
+                    .try_direct_terminal_input(
+                        &response_terminal_id,
+                        &response_session_id,
+                        &direct_input,
+                    )
+                    .await;
+                if !sent_direct {
+                    tracing::warn!(
+                        terminal_id = %response_terminal_id,
+                        session_id = %response_session_id,
+                        "Direct PTY model-unavailable recovery failed (chunk mode); falling back to message bus"
+                    );
+                    self.publish_terminal_input_with_active_session(
+                        &response_terminal_id,
+                        &response_session_id,
+                        CLAUDE_MODEL_UNAVAILABLE_RECOVERY_INPUT,
+                        Some(decision),
+                    )
+                    .await;
+                }
+                tracing::info!(
+                    terminal_id = %response_terminal_id,
+                    session_id = %response_session_id,
+                    "Model-unavailable recovery injected (chunk); sending immediate Enter to submit"
+                );
+                self.publish_terminal_input_with_active_session(
+                    &response_terminal_id,
+                    &response_session_id,
+                    "\n",
+                    Some(PromptDecision::auto_enter()),
+                )
+                .await;
+                return;
+            }
+        }
+
         // Chunk-level fallback for bypass-permissions toggle prompt.
         // Some terminal frames are emitted as dense ANSI chunks without stable
         // line boundaries, so line-based detection can miss this interaction.
@@ -1486,12 +1595,10 @@ next_action: handoff\n"
                 state.state_machine.on_response_sent(decision.clone());
                 state.detector.clear_buffer();
                 state.clear_handoff_stall_context();
-                let needs_immediate_submit = is_bypass_permissions_prompt(&normalized_output);
-                if needs_immediate_submit {
-                    state.clear_pending_handoff_submit();
-                } else {
-                    state.mark_pending_handoff_submit();
-                }
+                // Always follow handoff reminder injection with one submit Enter.
+                // Some Claude TUI frames keep injected text in composer without
+                // committing unless Enter is sent explicitly.
+                state.clear_pending_handoff_submit();
 
                 let response_terminal_id = state.terminal_id.clone();
                 let response_session_id = state.session_id.clone();
@@ -1526,20 +1633,18 @@ next_action: handoff\n"
                     )
                     .await;
                 }
-                if needs_immediate_submit {
-                    tracing::info!(
-                        terminal_id = %response_terminal_id,
-                        session_id = %response_session_id,
-                        "Handoff reminder injected while bypass status-line already visible (chunk); sending immediate Enter to submit"
-                    );
-                    self.publish_terminal_input_with_active_session(
-                        &response_terminal_id,
-                        &response_session_id,
-                        "\n",
-                        Some(PromptDecision::auto_enter()),
-                    )
-                    .await;
-                }
+                tracing::info!(
+                    terminal_id = %response_terminal_id,
+                    session_id = %response_session_id,
+                    "Handoff reminder injected (chunk); sending immediate Enter to submit"
+                );
+                self.publish_terminal_input_with_active_session(
+                    &response_terminal_id,
+                    &response_session_id,
+                    "\n",
+                    Some(PromptDecision::auto_enter()),
+                )
+                .await;
                 return;
             }
         }
@@ -1648,6 +1753,83 @@ next_action: handoff\n"
                         Some(decision),
                     )
                     .await;
+                return;
+            }
+
+            // Line-level fallback for model-unavailable prompts.
+            if state.auto_confirm
+                && !state.should_debounce()
+                && is_claude_model_unavailable_prompt(&normalized_line)
+            {
+                let decision = PromptDecision::LLMDecision {
+                    response: CLAUDE_MODEL_UNAVAILABLE_CONTINUE_RESPONSE.to_string(),
+                    reasoning:
+                        "Auto-recover Claude terminal when configured model is unavailable on current endpoint"
+                            .to_string(),
+                    target_index: None,
+                };
+                let detected_prompt =
+                    DetectedPrompt::new(PromptKind::Input, normalized_line.clone(), 0.95);
+
+                if !state.state_machine.should_process(&detected_prompt) {
+                    tracing::debug!(
+                        terminal_id = %state.terminal_id,
+                        "Skipping duplicate line-level Claude model-unavailable fallback injection"
+                    );
+                    continue;
+                }
+
+                state.last_detection = Some(Instant::now());
+                state.state_machine.on_prompt_detected(detected_prompt);
+                state.state_machine.on_response_sent(decision.clone());
+                state.detector.clear_buffer();
+
+                let response_terminal_id = state.terminal_id.clone();
+                let response_session_id = state.session_id.clone();
+
+                tracing::info!(
+                    terminal_id = %response_terminal_id,
+                    session_id = %response_session_id,
+                    "Detected Claude model-unavailable prompt (line); sending /model recovery command"
+                );
+
+                drop(terminals);
+                let direct_input = Self::normalize_input_for_direct_write(
+                    CLAUDE_MODEL_UNAVAILABLE_RECOVERY_INPUT,
+                );
+                let sent_direct = self
+                    .try_direct_terminal_input(
+                        &response_terminal_id,
+                        &response_session_id,
+                        &direct_input,
+                    )
+                    .await;
+                if !sent_direct {
+                    tracing::warn!(
+                        terminal_id = %response_terminal_id,
+                        session_id = %response_session_id,
+                        "Direct PTY model-unavailable recovery failed (line mode); falling back to message bus"
+                    );
+                    self.publish_terminal_input_with_active_session(
+                        &response_terminal_id,
+                        &response_session_id,
+                        CLAUDE_MODEL_UNAVAILABLE_RECOVERY_INPUT,
+                        Some(decision),
+                    )
+                    .await;
+                }
+                tracing::info!(
+                    terminal_id = %response_terminal_id,
+                    session_id = %response_session_id,
+                    "Model-unavailable recovery injected (line); sending immediate Enter to submit"
+                );
+                self.publish_terminal_input_with_active_session(
+                    &response_terminal_id,
+                    &response_session_id,
+                    "\n",
+                    Some(PromptDecision::auto_enter()),
+                )
+                .await;
                 return;
             }
 
@@ -1962,12 +2144,9 @@ next_action: handoff\n"
                 state.state_machine.on_response_sent(decision.clone());
                 state.detector.clear_buffer();
                 state.clear_handoff_stall_context();
-                let needs_immediate_submit = is_bypass_permissions_prompt(&normalized_line);
-                if needs_immediate_submit {
-                    state.clear_pending_handoff_submit();
-                } else {
-                    state.mark_pending_handoff_submit();
-                }
+                // Always submit after injecting handoff reminder to avoid
+                // composer-only text that never executes.
+                state.clear_pending_handoff_submit();
 
                 let response_terminal_id = state.terminal_id.clone();
                 let response_session_id = state.session_id.clone();
@@ -2002,20 +2181,18 @@ next_action: handoff\n"
                     )
                     .await;
                 }
-                if needs_immediate_submit {
-                    tracing::info!(
-                        terminal_id = %response_terminal_id,
-                        session_id = %response_session_id,
-                        "Handoff reminder injected while bypass status-line already visible (line); sending immediate Enter to submit"
-                    );
-                    self.publish_terminal_input_with_active_session(
-                        &response_terminal_id,
-                        &response_session_id,
-                        "\n",
-                        Some(PromptDecision::auto_enter()),
-                    )
-                    .await;
-                }
+                tracing::info!(
+                    terminal_id = %response_terminal_id,
+                    session_id = %response_session_id,
+                    "Handoff reminder injected (line); sending immediate Enter to submit"
+                );
+                self.publish_terminal_input_with_active_session(
+                    &response_terminal_id,
+                    &response_session_id,
+                    "\n",
+                    Some(PromptDecision::auto_enter()),
+                )
+                .await;
                 return;
             }
 
@@ -3882,6 +4059,228 @@ WARNING: Claude Code running in Bypass Permissions mode
                 assert_eq!(terminal_id, "term-1");
                 assert_eq!(session_id, "session-1");
                 assert_eq!(input, "\u{1b}[A\n");
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_claude_model_unavailable_prompt_sends_recovery_instruction() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "There's an issue with the selected model (glm-5). It may not exist or you may not have access to it. Run /model to pick a different model.",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(
+                    input.contains("/model"),
+                    "recovery input should execute /model command"
+                );
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_claude_model_unavailable_prompt_line_by_line_sends_recovery_instruction()
+     {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "There's an issue with the selected model (glm-5). You may not have access. Run /model to pick a different model.",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(
+                    input.contains("/model"),
+                    "line-level recovery should execute /model command"
+                );
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_claude_model_not_found_prompt_sends_recovery_instruction() {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "API Error: 503 {\"error\":{\"code\":\"model_not_found\",\"message\":\"No available channel for model claude-haiku-4-5 under group default (request id: abc)\"}}",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(
+                    input.contains("/model"),
+                    "gateway model_not_found recovery should execute /model command"
+                );
+                assert!(matches!(
+                    decision,
+                    Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
+                ));
+            }
+            other => panic!("expected TerminalInput event, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_output_claude_model_not_found_prompt_line_by_line_sends_recovery_instruction(
+    ) {
+        let message_bus = Arc::new(MessageBus::new(100));
+        let process_manager = Arc::new(ProcessManager::new());
+        let watcher = PromptWatcher::new(message_bus.clone(), process_manager);
+        let mut broadcast_rx = message_bus.subscribe_broadcast();
+
+        {
+            let mut terminals = watcher.terminals.write().await;
+            terminals.insert(
+                "term-1".to_string(),
+                TerminalWatchState::new(
+                    "term-1".to_string(),
+                    "workflow-1".to_string(),
+                    "task-1".to_string(),
+                    "session-1".to_string(),
+                    true,
+                ),
+            );
+        }
+
+        watcher
+            .process_output(
+                "term-1",
+                "API Error: 503\n{\"error\":{\"code\":\"model_not_found\"}}\nNo available channel for model claude-haiku-4-5 under group default",
+            )
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_millis(200), broadcast_rx.recv())
+            .await
+            .expect("expected terminal input broadcast")
+            .expect("broadcast channel should be open");
+
+        match event {
+            BusMessage::TerminalInput {
+                terminal_id,
+                session_id,
+                input,
+                decision,
+            } => {
+                assert_eq!(terminal_id, "term-1");
+                assert_eq!(session_id, "session-1");
+                assert!(
+                    input.contains("/model"),
+                    "line-level gateway model_not_found recovery should execute /model command"
+                );
                 assert!(matches!(
                     decision,
                     Some(crate::services::orchestrator::types::PromptDecision::LLMDecision { .. })
