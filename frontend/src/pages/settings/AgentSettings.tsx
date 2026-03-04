@@ -35,6 +35,7 @@ import { CreateConfigurationDialog } from '@/components/dialogs/settings/CreateC
 import { DeleteConfigurationDialog } from '@/components/dialogs/settings/DeleteConfigurationDialog';
 import { useAgentAvailability } from '@/hooks/useAgentAvailability';
 import { AgentAvailabilityIndicator } from '@/components/AgentAvailabilityIndicator';
+import { configApi } from '@/lib/api';
 import type {
   BaseCodingAgent,
   ExecutorConfigs,
@@ -82,7 +83,18 @@ export function AgentSettings() {
   const [executorError, setExecutorError] = useState<string | null>(null);
 
   // Check agent availability when draft executor changes
-  const agentAvailability = useAgentAvailability(executorDraft?.executor);
+  const [availabilityRefreshToken, setAvailabilityRefreshToken] = useState(0);
+  const agentAvailability = useAgentAvailability(
+    executorDraft?.executor,
+    {},
+    availabilityRefreshToken
+  );
+  const [installingCli, setInstallingCli] = useState(false);
+  const [installCliResult, setInstallCliResult] = useState<{
+    installed: boolean;
+    output: string;
+    exitCode: number;
+  } | null>(null);
 
   // Sync server state to local state when not dirty
   useEffect(() => {
@@ -140,6 +152,28 @@ export function AgentSettings() {
       console.error('Error saving executor profile:', err);
     } finally {
       setExecutorSaving(false);
+    }
+  };
+
+  const handleInstallAiClis = async () => {
+    setInstallingCli(true);
+    setInstallCliResult(null);
+    try {
+      const result = await configApi.installAiClis();
+      setInstallCliResult({
+        installed: result.installed,
+        output: result.output,
+        exitCode: result.exit_code,
+      });
+      setAvailabilityRefreshToken((token) => token + 1);
+    } catch (err) {
+      setInstallCliResult({
+        installed: false,
+        output: err instanceof Error ? err.message : 'Install failed',
+        exitCode: -1,
+      });
+    } finally {
+      setInstallingCli(false);
     }
   };
 
@@ -598,6 +632,50 @@ export function AgentSettings() {
               })()}
             </div>
             <AgentAvailabilityIndicator availability={agentAvailability} />
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleInstallAiClis}
+                disabled={installingCli}
+              >
+                {installingCli && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {t('settings.agents.installAiCli', {
+                  defaultValue: 'One-click Install AI CLIs',
+                })}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setAvailabilityRefreshToken((token) => token + 1)}
+              >
+                {t('settings.agents.refreshAvailability', {
+                  defaultValue: 'Refresh availability',
+                })}
+              </Button>
+            </div>
+            {installCliResult && (
+              <Alert
+                variant={installCliResult.installed ? 'default' : 'destructive'}
+              >
+                <AlertDescription className="whitespace-pre-wrap break-words text-xs">
+                  {installCliResult.installed
+                    ? t('settings.agents.installAiCliSuccess', {
+                        defaultValue: 'AI CLI installation finished successfully.',
+                      })
+                    : t('settings.agents.installAiCliFailed', {
+                        defaultValue: 'AI CLI installation failed.',
+                      })}
+                  {'\n'}
+                  {t('settings.agents.installAiCliExitCode', {
+                    defaultValue: 'Exit code: {{code}}',
+                    code: installCliResult.exitCode,
+                  })}
+                  {'\n'}
+                  {installCliResult.output}
+                </AlertDescription>
+              </Alert>
+            )}
             <p className="text-sm text-muted-foreground">
               {t('settings.general.taskExecution.executor.helper')}
             </p>

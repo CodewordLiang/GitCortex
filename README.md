@@ -334,6 +334,8 @@ cd GitCortex
 export INSTALL_AI_CLIS=0
 # Optional: map host repositories into container workspace
 export HOST_WORKSPACE_ROOT=../..
+# Optional: disable auto-creating starter projects on first launch
+export GITCORTEX_AUTO_SETUP_PROJECTS=0
 # Optional: enable API bearer auth in Docker only
 export GITCORTEX_DOCKER_API_TOKEN=
 
@@ -342,11 +344,30 @@ docker compose -f docker/compose/docker-compose.yml build
 docker compose -f docker/compose/docker-compose.yml up -d
 ```
 
+One-click installer (recommended on Windows):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\docker\install-docker.ps1
+```
+
+The script will interactively ask:
+- Which host folder to mount into container `/workspace`
+- Whether to install AI CLIs during build (`INSTALL_AI_CLIS`)
+- Whether to auto-create starter projects on first launch (`GITCORTEX_AUTO_SETUP_PROJECTS`)
+- Whether to clean old containers and data volume before startup
+- Port, API token, and optional API keys
+
+It then writes `docker/compose/.env`, validates compose config, builds, starts, and checks `/readyz`.
+
+If you choose not to install AI CLIs during image build, you can install later in UI:
+- `Settings -> Agents -> One-click Install AI CLIs`
+
 PowerShell example:
 
 ```powershell
 $env:INSTALL_AI_CLIS="0"
 $env:HOST_WORKSPACE_ROOT="../.."
+$env:GITCORTEX_AUTO_SETUP_PROJECTS="0"
 $env:GITCORTEX_DOCKER_API_TOKEN=""
 docker compose -f docker/compose/docker-compose.yml build
 docker compose -f docker/compose/docker-compose.yml up -d

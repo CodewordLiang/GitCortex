@@ -52,6 +52,11 @@ RUN apt-get update && apt-get install -y \
     | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
     && apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
 
+ENV NPM_CONFIG_PREFIX=/var/lib/gitcortex/.npm-global \
+    GH_EXTENSIONS_DIR=/var/lib/gitcortex/gh-extensions \
+    PATH=/var/lib/gitcortex/.npm-global/bin:$PATH
+RUN mkdir -p /var/lib/gitcortex/.npm-global /var/lib/gitcortex/gh-extensions
+
 COPY scripts/docker/install/ /opt/gitcortex/install/
 RUN if [ "$INSTALL_AI_CLIS" = "1" ]; then \
         bash /opt/gitcortex/install/install-ai-clis.sh; \
@@ -70,7 +75,6 @@ VOLUME ["/var/lib/gitcortex"]
 
 ENV GITCORTEX_ASSET_DIR=/var/lib/gitcortex/assets \
     GITCORTEX_TEMP_DIR=/var/lib/gitcortex \
-    GH_EXTENSIONS_DIR=/opt/gitcortex/gh-extensions \
     HOST=0.0.0.0 \
     PORT=23456 \
     RUST_LOG=info

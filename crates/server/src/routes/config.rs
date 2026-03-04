@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Duration};
 
 use axum::{
     Json, Router,
@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{self, StatusCode},
     response::{Json as ResponseJson, Response},
-    routing::{get, put},
+    routing::{get, post, put},
 };
 use deployment::{Deployment, DeploymentError};
 use executors::{
@@ -23,7 +23,7 @@ use services::services::config::{
     editor::{EditorConfig, EditorType},
     save_config_to_file,
 };
-use tokio::fs;
+use tokio::{fs, process::Command};
 use ts_rs::TS;
 use utils::{api::oauth::LoginStatus, assets::config_path, response::ApiResponse};
 
@@ -41,6 +41,7 @@ pub fn router() -> Router<DeploymentImpl> {
             get(check_editor_availability),
         )
         .route("/agents/check-availability", get(check_agent_availability))
+        .route("/agents/install-ai-clis", post(install_ai_clis))
 }
 
 const REMOTE_FEATURES_ENABLED: bool = false;
@@ -591,4 +592,84 @@ async fn check_agent_availability(
     };
 
     ResponseJson(ApiResponse::success(info))
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct InstallAiClisResponse {
+    pub installed: bool,
+    pub exit_code: i32,
+    pub script_path: String,
+    pub output: String,
+}
+
+fn truncate_output(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}\n...[truncated]")
+    } else {
+        truncated
+    }
+}
+
+fn resolve_ai_cli_install_script() -> Option<PathBuf> {
+    let mut candidates = vec![PathBuf::from("/opt/gitcortex/install/install-ai-clis.sh")];
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("scripts/docker/install/install-ai-clis.sh"));
+    }
+    candidates.push(PathBuf::from("scripts/docker/install/install-ai-clis.sh"));
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+async fn install_ai_clis(
+    State(_deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<InstallAiClisResponse>>, ApiError> {
+    let Some(script_path) = resolve_ai_cli_install_script() else {
+        return Err(ApiError::BadRequest(
+            "AI CLI install script not found".to_string(),
+        ));
+    };
+
+    let mut command = Command::new("bash");
+    command
+        .arg(&script_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let install_result = match tokio::time::timeout(Duration::from_secs(1800), command.output())
+        .await
+    {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let combined = if stderr.trim().is_empty() {
+                stdout.to_string()
+            } else if stdout.trim().is_empty() {
+                stderr.to_string()
+            } else {
+                format!("{stdout}\n{stderr}")
+            };
+            InstallAiClisResponse {
+                installed: output.status.success(),
+                exit_code: output.status.code().unwrap_or(-1),
+                script_path: script_path.display().to_string(),
+                output: truncate_output(&combined, 16_000),
+            }
+        }
+        Ok(Err(err)) => InstallAiClisResponse {
+            installed: false,
+            exit_code: -1,
+            script_path: script_path.display().to_string(),
+            output: format!("Failed to execute install script: {err}"),
+        },
+        Err(_) => InstallAiClisResponse {
+            installed: false,
+            exit_code: -1,
+            script_path: script_path.display().to_string(),
+            output: "AI CLI installation timed out after 30 minutes".to_string(),
+        },
+    };
+
+    Ok(ResponseJson(ApiResponse::success(install_result)))
 }

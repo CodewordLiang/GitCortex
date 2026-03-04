@@ -55,8 +55,13 @@ const FolderPickerDialogImpl = NiceModal.create<FolderPickerDialogProps>(
 
     useEffect(() => {
       if (modal.visible) {
-        setManualPath(value);
-        loadDirectory();
+        const initialPath = value.trim();
+        setManualPath(initialPath);
+        if (initialPath) {
+          loadDirectory(initialPath);
+        } else {
+          loadDirectory();
+        }
       }
     }, [modal.visible, value]);
 

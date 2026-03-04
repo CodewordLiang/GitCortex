@@ -1006,6 +1006,22 @@ export const configApi = {
     );
     return handleApiResponse<AvailabilityInfo>(response);
   },
+  installAiClis: async (): Promise<{
+    installed: boolean;
+    exit_code: number;
+    script_path: string;
+    output: string;
+  }> => {
+    const response = await makeRequest('/api/agents/install-ai-clis', {
+      method: 'POST',
+    });
+    return handleApiResponse<{
+      installed: boolean;
+      exit_code: number;
+      script_path: string;
+      output: string;
+    }>(response);
+  },
 };
 
 // Task Tags APIs (all tags are global)

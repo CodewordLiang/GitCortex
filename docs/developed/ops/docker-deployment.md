@@ -2,6 +2,17 @@
 
 ## Quick Start
 
+Windows one-click interactive installer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\docker\install-docker.ps1
+```
+
+The installer asks where to mount host files into `/workspace`, generates `docker/compose/.env`, validates compose, builds, starts, and checks readiness.
+It also supports disabling starter project bootstrap and cleaning old data volume before startup.
+
+Manual flow:
+
 ```bash
 cd docker/compose
 cp .env.example .env
@@ -14,6 +25,15 @@ docker compose up -d
 ```
 
 Access: http://localhost:23456
+
+## Isolation and Mount Scope
+
+- Containers are isolated by default and cannot read your full host disk automatically.
+- The app can access:
+  - container filesystem
+  - named volume mounted at `/var/lib/gitcortex`
+  - only the host path you map to `/workspace` (`HOST_WORKSPACE_ROOT`)
+- To expand accessible host files, change `HOST_WORKSPACE_ROOT` and recreate containers.
 
 ## Environment Variables
 
@@ -30,6 +50,7 @@ Access: http://localhost:23456
 | `GITCORTEX_WORKSPACE_ROOT` | No | `/workspace` | Workspace mount point in container |
 | `GITCORTEX_ALLOWED_ROOTS` | No | `/workspace,/var/lib/gitcortex` | Allowed roots for filesystem scanning |
 | `INSTALL_AI_CLIS` | No | `0` | Set to `1` to install AI CLIs during image build |
+| `GITCORTEX_AUTO_SETUP_PROJECTS` | No | `1` | Set to `0` to disable auto-creating starter projects on first launch |
 
 ## Volumes
 
@@ -59,6 +80,10 @@ docker compose -f docker/compose/docker-compose.yml restart
 
 # Rebuild after code changes
 docker compose -f docker/compose/docker-compose.yml up -d --build
+
+# Clean old data volume (destructive)
+docker compose -f docker/compose/docker-compose.yml down -v --remove-orphans
+docker compose -f docker/compose/docker-compose.yml up -d
 
 # Dev mode
 docker compose -f docker/compose/docker-compose.dev.yml up -d --build
@@ -93,5 +118,6 @@ docker compose -f docker/compose/docker-compose.yml restart
 | `/readyz` returns 503 | DB or dir missing | Check volume mounts |
 | `401` on `/api/*` | Docker API token enabled | Set `GITCORTEX_DOCKER_API_TOKEN` correctly or leave it empty |
 | Repo scan returns empty | Host workspace not mounted | Set `HOST_WORKSPACE_ROOT` and restart compose |
-| CLI not detected | Install disabled/failed | Set `INSTALL_AI_CLIS=1` and rebuild; run `/opt/gitcortex/install/verify-all-clis.sh` |
+| CLI not detected | Install disabled/failed | Set `INSTALL_AI_CLIS=1` and rebuild, or use `Settings -> Agents -> One-click Install AI CLIs`; run `/opt/gitcortex/install/verify-all-clis.sh` |
+| Unexpected starter projects | Old data volume reused or auto-setup enabled | Set `GITCORTEX_AUTO_SETUP_PROJECTS=0`; run `docker compose down -v --remove-orphans` for a clean state |
 | Permission denied | Volume ownership | Ensure volume owned by `gitcortex` user |

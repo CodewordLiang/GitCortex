@@ -6,6 +6,7 @@ import { PrimaryButton } from '../../ui-new/primitives/PrimaryButton';
 import type { ProjectConfig, GitStatus } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useErrorNotification } from '@/hooks/useErrorNotification';
+import { FolderPickerDialog } from '@/components/dialogs/shared/FolderPickerDialog';
 
 interface Step0ProjectProps {
   config: ProjectConfig;
@@ -52,31 +53,30 @@ export const Step0Project: React.FC<Step0ProjectProps> = ({
   errors,
   onError,
 }) => {
-  const { t } = useTranslation('workflow');
+  const { t } = useTranslation(['workflow', 'common']);
   const { notifyError } = useErrorNotification({ onError, context: 'Step0Project' });
   const [isLoading, setIsLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
   const handleSelectFolder = async () => {
-    // Call backend API to open native folder picker dialog
     try {
-      const response = await fetch('/api/filesystem/pick-folder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const selectedPath = await FolderPickerDialog.show({
+        value: config.workingDirectory || '/workspace',
+        title: t('common:dialogs.selectGitRepository', {
+          defaultValue: 'Select Git Repository',
+        }),
+        description: t('common:dialogs.chooseExistingRepo', {
+          defaultValue: 'Choose an existing repository folder',
+        }),
       });
 
-      const data = await parseJson(response);
-      if (response.ok) {
-        const apiResponse = data as { success?: boolean; data?: { path?: string; cancelled?: boolean } };
-        if (apiResponse.success && apiResponse.data?.path && !apiResponse.data?.cancelled) {
-          onChange({ workingDirectory: apiResponse.data.path });
-          setApiError(null);
-          void checkGitStatus(apiResponse.data.path);
-        }
-        // If cancelled, do nothing
-      } else {
-        setApiError(t('step0.errors.folderPicker'));
+      if (!selectedPath) {
+        return;
       }
+
+      onChange({ workingDirectory: selectedPath });
+      setApiError(null);
+      void checkGitStatus(selectedPath);
     } catch (error) {
       notifyError(error, 'selectFolder');
       setApiError(t('step0.errors.folderPicker'));
@@ -95,13 +95,12 @@ export const Step0Project: React.FC<Step0ProjectProps> = ({
 
       const data = await parseJson(response);
       if (response.ok) {
-        // API returns { success: true, data: GitStatus }
         const apiResponse = data as { success?: boolean; data?: unknown };
-        const gitStatusData = apiResponse?.data;
-        if (isGitStatus(gitStatusData)) {
+        if (apiResponse?.success && isGitStatus(apiResponse.data)) {
+          const gitStatusData = apiResponse.data;
           onChange({ gitStatus: gitStatusData });
         } else {
-          setApiError(t('step0.errors.gitStatus'));
+          setApiError(getErrorMessage(data, t('step0.errors.gitStatus')));
         }
       } else {
         setApiError(getErrorMessage(data, t('step0.errors.gitStatus')));

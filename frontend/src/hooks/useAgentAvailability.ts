@@ -15,7 +15,8 @@ export type AgentAvailabilityState =
 
 export function useAgentAvailability(
   agent: BaseCodingAgent | null | undefined,
-  options: ErrorNotificationOptions = {}
+  options: ErrorNotificationOptions = {},
+  refreshToken = 0
 ): AgentAvailabilityState {
   const [availability, setAvailability] =
     useState<AgentAvailabilityState>(null);
@@ -54,7 +55,7 @@ export function useAgentAvailability(
     };
 
     checkAvailability();
-  }, [agent, notifyError]);
+  }, [agent, notifyError, refreshToken]);
 
   return availability;
 }
