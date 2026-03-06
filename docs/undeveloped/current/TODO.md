@@ -1,23 +1,24 @@
-# GitCortex TODO 索引（拆分版）
+# GitCortex TODO 索引（状态拆分版）
 
-> **更新时间:** 2026-02-24
-> **目的:** 将任务按"已完成/未完成"拆分，减少单文件上下文噪音。
+> 更新时间：2026-03-07
+> 目的：统一维护入口，按“已完成 / 未完成”直接查看当前交付状态。
 
-## 当前主线
+## 当前状态
 
-- Phase 19 ✅ 已完成（PR #1, 2026-02-24）
-- Phase 19 总体方案：`docs/developed/plans/2026-01-27-phase-19-docker-deployment.md`
-- 未完成任务：`docs/undeveloped/current/TODO-pending.md`
+- 当前主线：工作流级主 Agent 对话 + 社交通道接入 MVP 已完成。
+- 状态统计（以 `docs/undeveloped/current/TODO-pending.md` 为准）：
+  - 已完成：44 项
+  - 未完成：5 项（均为低/中优先级保留项）
 
-## 文件入口
+## 文档入口
 
-- 已完成任务：`docs/developed/misc/TODO-completed.md`
-- 未完成任务：`docs/undeveloped/current/TODO-pending.md`
+- 当前执行看板（已完成/未完成）：`docs/undeveloped/current/TODO-pending.md`
+- 已交付沉淀（历史完成项）：`docs/developed/misc/TODO-completed.md`
 - 历史全量快照（只读）：`docs/developed/misc/TODO-legacy-full-2026-02-23.md`
 
 ## 维护规则
 
-1. 新完成项只更新到 `docs/developed/misc/TODO-completed.md`。
-2. 所有待办/阻塞项只维护在 `docs/undeveloped/current/TODO-pending.md`。
-3. 主线方案文档与任务拆分必须双向保持一致（Phase 文档改动后同步检查 TODO）。
-4. 大规模结构调整时，不直接改历史快照文件。
+1. 新完成事项必须从“未完成”移动到“已完成”，并同步更新日期。
+2. “未完成”仅保留当前确实未交付内容，不再混放已验收条目。
+3. 里程碑完成后，再把稳定沉淀内容同步归档到 `docs/developed/misc/TODO-completed.md`。
+4. 若某阶段全部完成，保留“未完成：暂无”占位，避免状态歧义。
