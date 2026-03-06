@@ -465,7 +465,7 @@ mod tests {
 
         // With only 1 terminal, advance should return false (no next terminal)
         assert!(!state.advance_terminal("task-1"));
-        assert_eq!(state.get_next_terminal_for_task("task-1"), Some(0));
+        assert_eq!(state.get_next_terminal_for_task("task-1"), None);
     }
 
     #[test]
