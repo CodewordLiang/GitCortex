@@ -20,6 +20,8 @@ const workflow: WorkflowDetailDto = {
   name: 'Workflow One',
   description: null,
   status: 'running',
+  executionMode: 'diy',
+  initialGoal: null,
   useSlashCommands: false,
   orchestratorEnabled: true,
   orchestratorApiType: null,
@@ -166,5 +168,24 @@ describe('WorkflowKanbanBoard', () => {
     // Find the task card by looking for the element with cursor-grab class
     const taskCards = document.querySelectorAll('.cursor-grab');
     expect(taskCards.length).toBe(2); // Two tasks in the workflow
+  });
+
+  it('shows an empty-state message for agent-planned workflows without tasks', () => {
+    vi.mocked(useWorkflow).mockReturnValue({
+      data: {
+        ...workflow,
+        executionMode: 'agent_planned',
+        tasks: [],
+      },
+      isLoading: false,
+      error: null,
+    } as any);
+
+    renderWithI18n(<WorkflowKanbanBoard workflowId="wf-1" />);
+
+    expect(screen.getByText(i18n.t('workflow:kanban.emptyTitle'))).toBeInTheDocument();
+    expect(
+      screen.getByText(i18n.t('workflow:kanban.emptyDescriptionAgentPlanned'))
+    ).toBeInTheDocument();
   });
 });

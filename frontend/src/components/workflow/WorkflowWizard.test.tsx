@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { WorkflowWizard } from './WorkflowWizard';
 import { renderWithI18n, setTestLanguage, i18n } from '@/test/renderWithI18n';
@@ -12,9 +12,28 @@ vi.mock('@/components/ConfigProvider', () => ({
   }),
 }));
 
+const fetchMock = vi.fn();
+
 describe('WorkflowWizard', () => {
   beforeEach(() => {
     void setTestLanguage();
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          isGitRepo: true,
+          isDirty: false,
+          currentBranch: 'main',
+        },
+      }),
+    } as Response);
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('should render wizard with step indicator', () => {
@@ -54,6 +73,49 @@ describe('WorkflowWizard', () => {
 
     await waitFor(() => {
       expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('skips task and terminal steps in agent-planned mode', async () => {
+    renderWithI18n(
+      <WorkflowWizard
+        onComplete={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(i18n.t('workflow:step0.placeholder')), {
+      target: { value: 'E:/GitCortex' },
+    });
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByText(i18n.t('workflow:wizard.buttons.next')));
+
+    await waitFor(() => {
+      expect(screen.getByText(i18n.t('workflow:step1.modeLabel'))).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText(i18n.t('workflow:step1.agentPlannedTitle')));
+
+    await waitFor(() => {
+      expect(screen.queryByText(i18n.t('workflow:steps.tasks.name'))).not.toBeInTheDocument();
+      expect(screen.queryByText(i18n.t('workflow:steps.terminals.name'))).not.toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(i18n.t('workflow:step1.namePlaceholder')), {
+      target: { value: 'Autonomous Recovery Workflow' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(i18n.t('workflow:step1.initialGoalPlaceholder')), {
+      target: { value: 'Plan the runtime topology after startup recovery' },
+    });
+
+    fireEvent.click(screen.getByText(i18n.t('workflow:wizard.buttons.next')));
+
+    await waitFor(() => {
+      expect(screen.getByText(i18n.t('workflow:step3.title'))).toBeInTheDocument();
     });
   });
 });

@@ -193,6 +193,19 @@ impl Deployment for LocalDeployment {
             tracing::warn!("Failed to reconcile terminal statuses on startup: {}", e);
         }
 
+        match orchestrator_runtime.recover_running_workflows().await {
+            Ok(0) => {}
+            Ok(recovered_count) => {
+                tracing::warn!(
+                    recovered_count,
+                    "Recovered interrupted workflows during startup"
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Failed to recover interrupted workflows on startup: {}", e);
+            }
+        }
+
         let deployment = Self {
             config,
             user_id,

@@ -325,7 +325,26 @@ describe('PipelineView', () => {
 
     expect(screen.getByText('Test Workflow')).toBeInTheDocument();
     expect(screen.getByText(i18n.t('workflow:pipeline.status.idle'))).toBeInTheDocument();
-    expect(screen.getByText(i18n.t('workflow:pipeline.mergeTerminalRole'))).toBeInTheDocument();
+    expect(screen.getByText(i18n.t('workflow:pipeline.emptyTitle'))).toBeInTheDocument();
+    expect(screen.getByText(i18n.t('workflow:pipeline.emptyDescription'))).toBeInTheDocument();
+    expect(screen.queryByText(i18n.t('workflow:pipeline.mergeTerminalRole'))).not.toBeInTheDocument();
+  });
+
+  it('should show the initial goal for empty agent-planned workflows', () => {
+    renderWithI18n(
+      <PipelineView
+        name="Test Workflow"
+        status="idle"
+        executionMode="agent_planned"
+        initialGoal="Coordinate recovery and rebuild the runtime graph"
+        tasks={[]}
+        mergeTerminal={mockMergeTerminal}
+      />
+    );
+
+    expect(screen.getByText(i18n.t('workflow:pipeline.emptyDescriptionAgentPlanned'))).toBeInTheDocument();
+    expect(screen.getByText(i18n.t('workflow:pipeline.initialGoalLabel') + ':')).toBeInTheDocument();
+    expect(screen.getByText('Coordinate recovery and rebuild the runtime graph')).toBeInTheDocument();
   });
 });
 

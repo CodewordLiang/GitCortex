@@ -114,6 +114,9 @@ const mockTasks: (WorkflowTask & { terminals: Terminal[] })[] = [
   },
 ];
 
+const getDeveloperButton = () => screen.getByRole('button', { name: /^Developer -/ });
+const getReviewerButton = () => screen.getByRole('button', { name: /^Reviewer -/ });
+
 describe('TerminalDebugView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -137,13 +140,35 @@ describe('TerminalDebugView', () => {
 
     it('should render all terminals in the list', () => {
       renderWithI18n(<TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />);
-      expect(screen.getByText('Developer')).toBeInTheDocument();
-      expect(screen.getByText('Reviewer')).toBeInTheDocument();
+      expect(getDeveloperButton()).toBeInTheDocument();
+      expect(getReviewerButton()).toBeInTheDocument();
     });
 
-    it('should show select terminal message when no terminal selected', () => {
+    it('should auto-select the first available terminal', async () => {
       renderWithI18n(<TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />);
-      expect(screen.getByText(i18n.t('workflow:terminalDebug.selectPrompt'))).toBeInTheDocument();
+
+      await waitFor(() => {
+        expect(screen.getByText('claude-code - model-1')).toBeInTheDocument();
+        expect(screen.getByTestId('terminal-emulator')).toHaveAttribute('data-terminal-id', 'term-1');
+      });
+    });
+
+    it('should show an empty state until terminals arrive, then auto-select the first one', async () => {
+      const { rerender } = renderWithI18n(
+        <TerminalDebugView tasks={[]} wsUrl="ws://localhost:8080" />
+      );
+
+      expect(screen.getByText(i18n.t('workflow:terminalDebug.emptyTitle'))).toBeInTheDocument();
+      expect(
+        screen.getByText(i18n.t('workflow:terminalDebug.emptyDescription'))
+      ).toBeInTheDocument();
+
+      rerender(<TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('claude-code - model-1')).toBeInTheDocument();
+        expect(screen.getByTestId('terminal-emulator')).toHaveAttribute('data-terminal-id', 'term-1');
+      });
     });
   });
 
@@ -151,10 +176,7 @@ describe('TerminalDebugView', () => {
     it('should select terminal when clicked', async () => {
       renderWithI18n(<TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />);
 
-      const devButton = screen.getByText('Developer').closest('button');
-      if (!devButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const devButton = getDeveloperButton();
       fireEvent.click(devButton);
 
       await waitFor(() => {
@@ -165,10 +187,7 @@ describe('TerminalDebugView', () => {
     it('should highlight selected terminal', async () => {
       renderWithI18n(<TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />);
 
-      const devButton = screen.getByText('Developer').closest('button');
-      if (!devButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const devButton = getDeveloperButton();
       fireEvent.click(devButton);
 
       await waitFor(() => {
@@ -195,10 +214,7 @@ describe('TerminalDebugView', () => {
     it('should render terminal info when selected', async () => {
       renderWithI18n(<TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />);
 
-      const devButton = screen.getByText('Developer').closest('button');
-      if (!devButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const devButton = getDeveloperButton();
       fireEvent.click(devButton);
 
       await waitFor(() => {
@@ -210,10 +226,7 @@ describe('TerminalDebugView', () => {
     it('should render TerminalEmulator when terminal selected', async () => {
       renderWithI18n(<TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />);
 
-      const devButton = screen.getByText('Developer').closest('button');
-      if (!devButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const devButton = getDeveloperButton();
       fireEvent.click(devButton);
 
       await waitFor(() => {
@@ -233,10 +246,7 @@ describe('TerminalDebugView', () => {
 
       renderWithI18n(<TerminalDebugView tasks={waitingTasks} wsUrl="ws://localhost:8080" />);
 
-      const reviewerButton = screen.getByText('Reviewer').closest('button');
-      if (!reviewerButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const reviewerButton = getReviewerButton();
       fireEvent.click(reviewerButton);
 
       await waitFor(() => {
@@ -258,12 +268,8 @@ describe('TerminalDebugView', () => {
 
       renderWithI18n(<TerminalDebugView tasks={switchableTasks} wsUrl="ws://localhost:8080" />);
 
-      const devButton = screen.getByText('Developer').closest('button');
-      const reviewerButton = screen.getByText('Reviewer').closest('button');
-
-      if (!devButton || !reviewerButton) {
-        throw new Error('Expected terminal buttons to be rendered.');
-      }
+      const devButton = getDeveloperButton();
+      const reviewerButton = getReviewerButton();
 
       fireEvent.click(devButton);
 
@@ -301,14 +307,12 @@ describe('TerminalDebugView', () => {
           })
       );
 
-      renderWithI18n(<TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />);
+      const { rerender } = renderWithI18n(
+        <TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />
+      );
 
-      const devButton = screen.getByText('Developer').closest('button');
-      const reviewerButton = screen.getByText('Reviewer').closest('button');
-
-      if (!devButton || !reviewerButton) {
-        throw new Error('Expected terminal buttons to be rendered.');
-      }
+      const devButton = getDeveloperButton();
+      const reviewerButton = getReviewerButton();
 
       fireEvent.click(devButton);
 
@@ -333,7 +337,25 @@ describe('TerminalDebugView', () => {
         throw new Error('Expected terminal start request to be pending.');
       }
 
-      resolveStartRequest(createFetchOkResponse());
+      await act(async () => {
+        resolveStartRequest?.(createFetchOkResponse());
+      });
+
+      rerender(
+        <TerminalDebugView
+          tasks={[
+            {
+              ...mockTasks[0],
+              terminals: mockTasks[0].terminals.map((terminal) =>
+                terminal.id === 'term-2' ? { ...terminal, status: 'waiting' } : terminal
+              ),
+            },
+          ]}
+          wsUrl="ws://localhost:8080"
+        />
+      );
+
+      fireEvent.click(getReviewerButton());
 
       await waitFor(() => {
         expect(screen.getByTestId('terminal-emulator')).toHaveAttribute('data-terminal-id', 'term-2');
@@ -362,12 +384,11 @@ describe('TerminalDebugView', () => {
         },
       ];
 
-      renderWithI18n(<TerminalDebugView tasks={pendingTasks} wsUrl="ws://localhost:8080" />);
+      const { rerender } = renderWithI18n(
+        <TerminalDebugView tasks={pendingTasks} wsUrl="ws://localhost:8080" />
+      );
 
-      const devButton = screen.getByText('Developer').closest('button');
-      if (!devButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const devButton = getDeveloperButton();
 
       fireEvent.click(devButton);
 
@@ -385,7 +406,24 @@ describe('TerminalDebugView', () => {
         throw new Error('Expected terminal start request to be pending.');
       }
 
-      resolveStartRequest(createFetchOkResponse());
+      await act(async () => {
+        resolveStartRequest?.(createFetchOkResponse());
+      });
+
+      rerender(
+        <TerminalDebugView
+          tasks={[
+            {
+              ...pendingTasks[0],
+              terminals: pendingTasks[0].terminals.map((terminal) => ({
+                ...terminal,
+                status: 'waiting',
+              })),
+            },
+          ]}
+          wsUrl="ws://localhost:8080"
+        />
+      );
 
       await waitFor(() => {
         expect(screen.getByTestId('terminal-emulator')).toHaveAttribute('data-terminal-id', 'term-1');
@@ -418,10 +456,7 @@ describe('TerminalDebugView', () => {
 
       renderWithI18n(<TerminalDebugView tasks={completedTasks} wsUrl="ws://localhost:8080" />);
 
-      const devButton = screen.getByText('Developer').closest('button');
-      if (!devButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const devButton = getDeveloperButton();
       fireEvent.click(devButton);
 
       await waitFor(() => {
@@ -435,10 +470,7 @@ describe('TerminalDebugView', () => {
     it('should auto-restart working terminal on process-not-running error', async () => {
       renderWithI18n(<TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />);
 
-      const devButton = screen.getByText('Developer').closest('button');
-      if (!devButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const devButton = getDeveloperButton();
       fireEvent.click(devButton);
 
       await waitFor(() => {
@@ -487,10 +519,7 @@ describe('TerminalDebugView', () => {
 
       renderWithI18n(<TerminalDebugView tasks={completedTasks} wsUrl="ws://localhost:8080" />);
 
-      const devButton = screen.getByText('Developer').closest('button');
-      if (!devButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const devButton = getDeveloperButton();
 
       fireEvent.click(devButton);
 
@@ -530,10 +559,7 @@ describe('TerminalDebugView', () => {
 
       renderWithI18n(<TerminalDebugView tasks={completedTasks} wsUrl="ws://localhost:8080" />);
 
-      const devButton = screen.getByText('Developer').closest('button');
-      if (!devButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const devButton = getDeveloperButton();
 
       fireEvent.click(devButton);
 
@@ -558,10 +584,7 @@ describe('TerminalDebugView', () => {
     it('should render control buttons when terminal selected', async () => {
       renderWithI18n(<TerminalDebugView tasks={mockTasks} wsUrl="ws://localhost:8080" />);
 
-      const devButton = screen.getByText('Developer').closest('button');
-      if (!devButton) {
-        throw new Error('Expected terminal button to be rendered.');
-      }
+      const devButton = getDeveloperButton();
       fireEvent.click(devButton);
 
       await waitFor(() => {

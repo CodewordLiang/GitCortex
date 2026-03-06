@@ -572,8 +572,9 @@ impl OrchestratorRuntime {
     ///
     /// Finds all workflows with status 'running' and marks them as 'failed',
     /// as they were likely interrupted by a crash or restart.
+    /// Returns the number of interrupted workflows discovered.
     /// Should be called on service startup.
-    pub async fn recover_running_workflows(&self) -> Result<()> {
+    pub async fn recover_running_workflows(&self) -> Result<usize> {
         // Query for workflows with status 'running'
         // Note: We need to add this method to Workflow model, but for now use a workaround
         let pool = &self.db.pool;
@@ -591,10 +592,11 @@ impl OrchestratorRuntime {
 
         if rows.is_empty() {
             info!("No running workflows to recover");
-            return Ok(());
+            return Ok(0);
         }
 
-        warn!("Found {} running workflows to recover", rows.len());
+        let recovered_workflow_count = rows.len();
+        warn!("Found {} running workflows to recover", recovered_workflow_count);
 
         for row in rows {
             let workflow_id: String = row.get("id");
@@ -676,7 +678,7 @@ impl OrchestratorRuntime {
             }
         }
 
-        Ok(())
+        Ok(recovered_workflow_count)
     }
 }
 
@@ -688,7 +690,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::services::orchestrator::{MessageBus, MockLLMClient};
+    use crate::services::orchestrator::{MessageBus, MockLLMClient, OrchestratorState};
 
     async fn setup_runtime_with_ready_workflow() -> (Arc<OrchestratorRuntime>, String) {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
@@ -700,6 +702,8 @@ mod tests {
                 name TEXT NOT NULL,
                 description TEXT,
                 status TEXT NOT NULL,
+                execution_mode TEXT NOT NULL DEFAULT 'diy',
+                initial_goal TEXT,
                 use_slash_commands INTEGER NOT NULL DEFAULT 0,
                 orchestrator_enabled INTEGER NOT NULL DEFAULT 0,
                 orchestrator_api_type TEXT,
@@ -713,6 +717,7 @@ mod tests {
                 merge_terminal_model_id TEXT NOT NULL,
                 target_branch TEXT NOT NULL,
                 git_watcher_enabled INTEGER NOT NULL DEFAULT 1,
+                orchestrator_state TEXT,
                 ready_at TEXT,
                 started_at TEXT,
                 completed_at TEXT,
@@ -1049,6 +1054,36 @@ mod tests {
         );
 
         runtime.stop_workflow(&workflow_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_recover_running_workflows_marks_interrupted_workflows_failed() {
+        let (runtime, workflow_id) = setup_runtime_with_ready_workflow().await;
+
+        Workflow::update_status(&runtime.db.pool, &workflow_id, "running")
+            .await
+            .expect("should mark workflow as running");
+
+        let mut persisted_state = OrchestratorState::new(workflow_id.clone());
+        persisted_state.set_workflow_planning_complete(false);
+        runtime
+            .persistence
+            .save_state(&persisted_state)
+            .await
+            .expect("should persist orchestrator state");
+
+        let recovered_count = runtime
+            .recover_running_workflows()
+            .await
+            .expect("recovery should succeed");
+
+        assert_eq!(recovered_count, 1);
+
+        let workflow = Workflow::find_by_id(&runtime.db.pool, &workflow_id)
+            .await
+            .expect("should query recovered workflow")
+            .expect("workflow should still exist");
+        assert_eq!(workflow.status, WORKFLOW_STATUS_FAILED);
     }
 
     #[tokio::test]

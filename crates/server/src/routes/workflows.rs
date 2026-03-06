@@ -19,7 +19,7 @@ use serde_json::json;
 use services::services::{
     cc_switch::CCSwitchService,
     git::GitServiceError,
-    orchestrator::{BusMessage, TerminalCoordinator},
+    orchestrator::{BusMessage, OrchestratorRuntime, TerminalCoordinator},
     terminal::TerminalLauncher,
 };
 use utils::{response::ApiResponse, text};
@@ -70,8 +70,10 @@ pub struct UpdateWorkflowStatusRequest {
 
 /// Recovery Response
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecoveryResponse {
     pub message: String,
+    pub recovered_workflows: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1746,18 +1748,30 @@ async fn create_runtime_terminal(
 
 /// POST /api/workflows/recover
 /// Trigger recovery of workflows after service restart
-async fn recover_workflows(
-    State(_deployment): State<DeploymentImpl>,
-) -> Result<ResponseJson<ApiResponse<RecoveryResponse>>, ApiError> {
-    // In a full implementation, this would:
-    // 1. Scan database for workflows in "running" state
-    // 2. Reconnect orchestrator runtime to those workflows
-    // 3. Verify terminal/session states
-    // 4. Update statuses for workflows that terminated during restart
+async fn run_workflow_recovery(
+    runtime: &OrchestratorRuntime,
+) -> Result<RecoveryResponse, ApiError> {
+    let recovered_workflows = runtime
+        .recover_running_workflows()
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to recover workflows: {e}")))?;
 
-    let response = RecoveryResponse {
-        message: "Recovery triggered".to_string(),
+    let message = if recovered_workflows == 0 {
+        "No interrupted workflows required recovery".to_string()
+    } else {
+        format!("Recovered {recovered_workflows} interrupted workflow(s)")
     };
+
+    Ok(RecoveryResponse {
+        message,
+        recovered_workflows,
+    })
+}
+
+async fn recover_workflows(
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<RecoveryResponse>>, ApiError> {
+    let response = run_workflow_recovery(deployment.orchestrator_runtime()).await?;
 
     Ok(ResponseJson(ApiResponse::success(response)))
 }
@@ -2391,6 +2405,108 @@ mod create_request_validation_tests {
         let error = validate_create_request(&request)
             .expect_err("expected missing orchestrator_config error");
         assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+}
+
+#[cfg(test)]
+mod recovery_response_tests {
+    use std::sync::Arc;
+
+    use chrono::Utc;
+    use db::{DBService, models::Workflow};
+    use services::services::orchestrator::MessageBus;
+
+    use super::*;
+
+    async fn setup_runtime_with_running_workflow() -> (OrchestratorRuntime, String, sqlx::SqlitePool) {
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE workflow (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL,
+                execution_mode TEXT NOT NULL DEFAULT 'diy',
+                initial_goal TEXT,
+                use_slash_commands INTEGER NOT NULL DEFAULT 0,
+                orchestrator_enabled INTEGER NOT NULL DEFAULT 0,
+                orchestrator_api_type TEXT,
+                orchestrator_base_url TEXT,
+                orchestrator_api_key TEXT,
+                orchestrator_model TEXT,
+                error_terminal_enabled INTEGER NOT NULL DEFAULT 0,
+                error_terminal_cli_id TEXT,
+                error_terminal_model_id TEXT,
+                merge_terminal_cli_id TEXT NOT NULL,
+                merge_terminal_model_id TEXT NOT NULL,
+                target_branch TEXT NOT NULL,
+                git_watcher_enabled INTEGER NOT NULL DEFAULT 1,
+                orchestrator_state TEXT,
+                ready_at TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let db = Arc::new(DBService { pool: pool.clone() });
+        let runtime = OrchestratorRuntime::new(db, Arc::new(MessageBus::new(1000)));
+        let workflow_id = Uuid::new_v4().to_string();
+        let workflow = Workflow {
+            id: workflow_id.clone(),
+            project_id: Uuid::new_v4(),
+            name: "Recovered Workflow".to_string(),
+            description: None,
+            status: "running".to_string(),
+            execution_mode: "agent_planned".to_string(),
+            initial_goal: Some("Resume orchestration after restart".to_string()),
+            use_slash_commands: false,
+            orchestrator_enabled: false,
+            orchestrator_api_type: None,
+            orchestrator_base_url: None,
+            orchestrator_api_key: None,
+            orchestrator_model: None,
+            error_terminal_enabled: false,
+            error_terminal_cli_id: None,
+            error_terminal_model_id: None,
+            merge_terminal_cli_id: "merge-cli".to_string(),
+            merge_terminal_model_id: "merge-model".to_string(),
+            target_branch: "main".to_string(),
+            git_watcher_enabled: true,
+            ready_at: None,
+            started_at: Some(Utc::now()),
+            completed_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        Workflow::create(&pool, &workflow).await.unwrap();
+
+        (runtime, workflow_id, pool)
+    }
+
+    #[tokio::test]
+    async fn recovery_helper_reports_interrupted_workflow_count() {
+        let (runtime, workflow_id, pool) = setup_runtime_with_running_workflow().await;
+
+        let response = run_workflow_recovery(&runtime)
+            .await
+            .expect("workflow recovery should succeed");
+
+        assert_eq!(response.recovered_workflows, 1);
+        assert_eq!(response.message, "Recovered 1 interrupted workflow(s)");
+
+        let workflow = Workflow::find_by_id(&pool, &workflow_id)
+            .await
+            .expect("should query workflow after recovery")
+            .expect("workflow should exist");
+        assert_eq!(workflow.status, "failed");
     }
 }
 
