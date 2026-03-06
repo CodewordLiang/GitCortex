@@ -6,6 +6,10 @@ import type { WizardConfig } from '../types';
 export function validateStep4Terminals(config: WizardConfig): Record<string, string> {
   const errors: Record<string, string> = {};
 
+  if (config.basic.executionMode === 'agent_planned') {
+    return errors;
+  }
+
   if (config.terminals.length === 0) {
     errors.terminals = 'validation.terminals.required';
     return errors;

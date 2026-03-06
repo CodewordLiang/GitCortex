@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { WIZARD_STEPS, WizardStep } from '../types';
 
-const STEP_ORDER = WIZARD_STEPS.map((step) => step.step);
+const DEFAULT_STEP_ORDER = WIZARD_STEPS.map((step) => step.step);
 
 export interface UseWizardNavigationOptions {
   initialStep?: WizardStep;
+  steps?: WizardStep[];
 }
 
 export interface UseWizardNavigationReturn {
@@ -24,21 +25,37 @@ export interface UseWizardNavigationReturn {
 export function useWizardNavigation(
   options: UseWizardNavigationOptions = {}
 ): UseWizardNavigationReturn {
-  const { initialStep = WizardStep.Project } = options;
-  const normalizedInitialStep = STEP_ORDER.includes(initialStep)
+  const { initialStep = WizardStep.Project, steps } = options;
+  const stepOrder = useMemo(() => {
+    if (steps && steps.length > 0) {
+      return [...steps];
+    }
+
+    return DEFAULT_STEP_ORDER;
+  }, [steps]);
+
+  const normalizedInitialStep = stepOrder.includes(initialStep)
     ? initialStep
-    : WizardStep.Project;
+    : (stepOrder[0] ?? WizardStep.Project);
 
   const [currentStep, setCurrentStep] = useState<WizardStep>(normalizedInitialStep);
 
+  useEffect(() => {
+    if (stepOrder.includes(currentStep)) {
+      return;
+    }
+
+    setCurrentStep(stepOrder[0] ?? WizardStep.Project);
+  }, [currentStep, stepOrder]);
+
   const stepIndex = useMemo(
-    () => STEP_ORDER.indexOf(currentStep),
-    [currentStep]
+    () => stepOrder.indexOf(currentStep),
+    [currentStep, stepOrder]
   );
 
   const canGoNext = useCallback(() => {
-    return stepIndex < STEP_ORDER.length - 1;
-  }, [stepIndex]);
+    return stepIndex >= 0 && stepIndex < stepOrder.length - 1;
+  }, [stepIndex, stepOrder.length]);
 
   const canGoPrevious = useCallback(() => {
     return stepIndex > 0;
@@ -46,26 +63,26 @@ export function useWizardNavigation(
 
   const next = useCallback(() => {
     if (canGoNext()) {
-      setCurrentStep(STEP_ORDER[stepIndex + 1]);
+      setCurrentStep(stepOrder[stepIndex + 1]);
     }
-  }, [canGoNext, stepIndex]);
+  }, [canGoNext, stepIndex, stepOrder]);
 
   const previous = useCallback(() => {
     if (canGoPrevious()) {
-      setCurrentStep(STEP_ORDER[stepIndex - 1]);
+      setCurrentStep(stepOrder[stepIndex - 1]);
     }
-  }, [canGoPrevious, stepIndex]);
+  }, [canGoPrevious, stepIndex, stepOrder]);
 
   const goToStep = useCallback((step: WizardStep) => {
-    if (STEP_ORDER.includes(step)) {
+    if (stepOrder.includes(step)) {
       setCurrentStep(step);
     }
-  }, []);
+  }, [stepOrder]);
 
   return {
     currentStep,
     stepIndex,
-    totalSteps: STEP_ORDER.length,
+    totalSteps: stepOrder.length,
     canGoNext,
     canGoPrevious,
     next,

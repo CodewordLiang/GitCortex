@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { TerminalCard, type Terminal } from './TerminalCard';
 import { useTranslation } from 'react-i18next';
+import type { WorkflowExecutionMode } from './types';
 
 /** Workflow runtime status */
 export type WorkflowStatus =
@@ -32,6 +33,10 @@ interface PipelineViewProps {
   name: string;
   /** Current workflow status */
   status: WorkflowStatus;
+  /** Workflow creation mode */
+  executionMode?: WorkflowExecutionMode | string;
+  /** Initial goal for agent-planned workflows */
+  initialGoal?: string | null;
   /** Array of tasks with their terminals */
   tasks: WorkflowTask[];
   /** Merge terminal configuration */
@@ -65,6 +70,8 @@ const STATUS_LABEL_KEYS: Record<WorkflowStatus, string> = {
 export function PipelineView({
   name,
   status,
+  executionMode,
+  initialGoal,
   tasks,
   mergeTerminal,
   onTerminalClick,
@@ -87,52 +94,69 @@ export function PipelineView({
         </Badge>
       </div>
 
-      {/* Tasks with Terminals */}
-      <div className="space-y-6">
-        {tasks.map((task, taskIndex) => (
-          <div key={task.id} className="space-y-3">
-            {/* Task Info: Number, Name, Branch Badge */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-low">
-                {t('pipeline.taskLabel', { index: taskIndex + 1 })}
-              </span>
-              <span className="text-base font-semibold text-normal">
-                {task.name}
-              </span>
-              <Badge
-                variant="outline"
-                className="ml-auto bg-secondary text-low border-border"
-              >
-                {task.branch}
-              </Badge>
-            </div>
-
-            {/* Terminals Row */}
-            <div className="flex items-center gap-2">
-              {task.terminals.map((terminal, terminalIndex) => (
-                <React.Fragment key={terminal.id}>
-                  {/* Terminal Card */}
-                  <TerminalCard
-                    terminal={terminal}
-                    onClick={() =>
-                      onTerminalClick?.(task.id, terminal.id)
-                    }
-                  />
-
-                  {/* Connector Line (between terminals) */}
-                  {terminalIndex < task.terminals.length - 1 && (
-                    <div className="w-8 h-0.5 bg-muted/30 flex-shrink-0" />
-                  )}
-                </React.Fragment>
-              ))}
-            </div>
+      {tasks.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border bg-secondary/40 p-6">
+          <div className="text-base font-medium text-high">
+            {t('pipeline.emptyTitle')}
           </div>
-        ))}
-      </div>
+          <div className="mt-2 text-sm text-low">
+            {executionMode === 'agent_planned'
+              ? t('pipeline.emptyDescriptionAgentPlanned')
+              : t('pipeline.emptyDescription')}
+          </div>
+          {initialGoal ? (
+            <div className="mt-4 rounded border border-border bg-panel px-base py-base text-sm text-normal">
+              <span className="font-medium text-high">
+                {t('pipeline.initialGoalLabel')}:
+              </span>{' '}
+              {initialGoal}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <>
+          {/* Tasks with Terminals */}
+          <div className="space-y-6">
+            {tasks.map((task, taskIndex) => (
+              <div key={task.id} className="space-y-3">
+                {/* Task Info: Number, Name, Branch Badge */}
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-low">
+                    {t('pipeline.taskLabel', { index: taskIndex + 1 })}
+                  </span>
+                  <span className="text-base font-semibold text-normal">
+                    {task.name}
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className="ml-auto bg-secondary text-low border-border"
+                  >
+                    {task.branch}
+                  </Badge>
+                </div>
 
-      {/* Merge Terminal (Dashed Border Box) */}
-      <div className="border-2 border-dashed border-border rounded-lg p-6 bg-secondary/50">
-        <div className="flex items-center justify-center">
+                {/* Terminals Row */}
+                <div className="flex items-center gap-2">
+                  {task.terminals.map((terminal, terminalIndex) => (
+                    <React.Fragment key={terminal.id}>
+                      <TerminalCard
+                        terminal={terminal}
+                        onClick={() => onTerminalClick?.(task.id, terminal.id)}
+                      />
+
+                      {terminalIndex < task.terminals.length - 1 && (
+                        <div className="w-8 h-0.5 bg-muted/30 flex-shrink-0" />
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Merge Terminal (Dashed Border Box) */}
+          <div className="border-2 border-dashed border-border rounded-lg p-6 bg-secondary/50">
+            <div className="flex items-center justify-center">
               <TerminalCard
                 terminal={{
                   id: 'merge-terminal',
@@ -142,9 +166,11 @@ export function PipelineView({
                   status: mergeTerminal.status,
                 }}
                 onClick={onMergeTerminalClick}
-          />
-        </div>
-      </div>
+              />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

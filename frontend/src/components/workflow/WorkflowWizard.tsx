@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { StepIndicator } from './StepIndicator';
-import { WizardStep, WizardConfig, getDefaultWizardConfig } from './types';
+import {
+  WizardStep,
+  WizardConfig,
+  getDefaultWizardConfig,
+  getVisibleWizardStepIds,
+  getVisibleWizardSteps,
+} from './types';
 import type { ModelConfig } from './types';
 import { useWizardNavigation } from './hooks/useWizardNavigation';
 import { useWizardValidation } from './hooks/useWizardValidation';
@@ -39,11 +45,19 @@ export function WorkflowWizard({
     config: getDefaultWizardConfig(),
     isSubmitting: false,
   });
-  const navigation = useWizardNavigation();
   const [completedSteps, setCompletedSteps] = useState<WizardStep[]>([]);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const { config, isSubmitting } = state;
+  const visibleSteps = useMemo(
+    () => getVisibleWizardSteps(config.basic.executionMode),
+    [config.basic.executionMode]
+  );
+  const visibleStepIds = useMemo(
+    () => getVisibleWizardStepIds(config.basic.executionMode),
+    [config.basic.executionMode]
+  );
+  const navigation = useWizardNavigation({ steps: visibleStepIds });
   const { currentStep } = navigation;
   const validation = useWizardValidation(currentStep);
   const { errors } = validation;
@@ -306,7 +320,11 @@ export function WorkflowWizard({
       </CardHeader>
       <CardContent className="px-base flex min-h-0 flex-1 flex-col">
         <div className="shrink-0">
-          <StepIndicator currentStep={currentStep} completedSteps={completedSteps} />
+          <StepIndicator
+            currentStep={currentStep}
+            completedSteps={completedSteps.filter((step) => visibleStepIds.includes(step))}
+            steps={visibleSteps}
+          />
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto mb-6">

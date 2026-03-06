@@ -106,12 +106,17 @@ export function TerminalActivityPanel({ workflowId }: Readonly<TerminalActivityP
   const { t } = useTranslation('workflow');
   const [isCollapsed, setIsCollapsed] = useState(false);
   const { data: workflow, isLoading } = useWorkflow(workflowId ?? '');
+  const workflowTasks = workflow?.tasks ?? [];
+  const totalTerminalCount = workflowTasks.reduce(
+    (count, task) => count + task.terminals.length,
+    0
+  );
 
   // Filter to only show active terminals (working/waiting)
   const activityItems = useMemo<ActivityItem[]>(() => {
     if (!workflow) return [];
 
-    return workflow.tasks.flatMap((task) =>
+    return workflowTasks.flatMap((task) =>
       task.terminals
         .filter((terminal) => ACTIVE_STATUSES.has(terminal.status))
         .map((terminal) => ({
@@ -123,7 +128,7 @@ export function TerminalActivityPanel({ workflowId }: Readonly<TerminalActivityP
           lastActivity: null, // Will be populated from terminalStore
         }))
     );
-  }, [workflow, t]);
+  }, [workflow, workflowTasks, t]);
 
   const toggleCollapse = () => setIsCollapsed(!isCollapsed);
 
@@ -164,7 +169,11 @@ export function TerminalActivityPanel({ workflowId }: Readonly<TerminalActivityP
             <div className="text-xs text-low">{t('terminalActivity.loading')}</div>
           )}
           {workflowId && !isLoading && activityItems.length === 0 && (
-            <div className="text-xs text-low">{t('terminalActivity.noActive')}</div>
+            <div className="text-xs text-low">
+              {totalTerminalCount === 0
+                ? t('terminalActivity.noTerminalsYet')
+                : t('terminalActivity.noActive')}
+            </div>
           )}
           {workflowId && !isLoading && activityItems.length > 0 && (
             <div className="space-y-1">

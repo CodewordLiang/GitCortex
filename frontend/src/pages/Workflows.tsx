@@ -112,6 +112,17 @@ function isSamePromptContext(
   return true;
 }
 
+function getExecutionModeLabel(
+  mode: string | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  if (mode === 'agent_planned') {
+    return t('management.mode.agent_planned');
+  }
+
+  return t('management.mode.diy');
+}
+
 // Helper to resolve project ID from working directory path
 async function resolveProjectIdFromPath(
   workingDir: string,
@@ -714,14 +725,14 @@ export function Workflows() {
   };
 
   // Helper to map DTO tasks to PipelineView tasks
-  const mapWorkflowTasks = (dtoTasks: WorkflowTaskDto[]): WorkflowTask[] => {
-    return [...dtoTasks]
+  const mapWorkflowTasks = (dtoTasks: WorkflowTaskDto[] | undefined | null): WorkflowTask[] => {
+    return [...(dtoTasks ?? [])]
       .sort((a, b) => a.orderIndex - b.orderIndex)
       .map((task) => ({
       id: task.id,
       name: task.name,
       branch: task.branch,
-      terminals: [...task.terminals]
+      terminals: [...(task.terminals ?? [])]
         .sort((a, b) => a.orderIndex - b.orderIndex)
         .map((terminal) => ({
         id: terminal.id,
@@ -908,11 +919,16 @@ export function Workflows() {
 
   if (selectedWorkflowDetail && selectedWorkflowId) {
     const actions = getWorkflowActions(selectedWorkflowDetail.status as any);
-    const hasCompletedAllTasks = selectedWorkflowDetail.tasks.every(
+    const workflowTasks = selectedWorkflowDetail.tasks ?? [];
+    const hasCompletedAllTasks = workflowTasks.every(
       (task) => task.status === 'completed'
     );
     const canTriggerMerge =
       actions.canMerge && hasCompletedAllTasks && !mergeMutation.isPending;
+    const executionModeLabel = getExecutionModeLabel(
+      selectedWorkflowDetail.executionMode,
+      t
+    );
 
     return (
       <div className="h-full min-h-0 overflow-auto space-y-6">
@@ -954,10 +970,42 @@ export function Workflows() {
           />
         </div>
 
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="rounded-full bg-secondary px-3 py-1 text-xs font-medium text-normal">
+                {executionModeLabel}
+              </span>
+              <span
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-medium',
+                  getWorkflowStatusBadgeClass(selectedWorkflowDetail.status)
+                )}
+              >
+                {t(`status.${selectedWorkflowDetail.status}`, {
+                  defaultValue: selectedWorkflowDetail.status,
+                })}
+              </span>
+            </div>
+            {selectedWorkflowDetail.initialGoal ? (
+              <div className="space-y-1">
+                <div className="text-xs font-medium uppercase tracking-wide text-low">
+                  {t('management.goalLabel')}
+                </div>
+                <div className="text-sm text-normal">
+                  {selectedWorkflowDetail.initialGoal}
+                </div>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
         <PipelineView
           name={selectedWorkflowDetail.name}
           status={mapWorkflowStatus(selectedWorkflowDetail.status)}
-          tasks={mapWorkflowTasks(selectedWorkflowDetail.tasks)}
+          executionMode={selectedWorkflowDetail.executionMode}
+          initialGoal={selectedWorkflowDetail.initialGoal}
+          tasks={mapWorkflowTasks(workflowTasks)}
           mergeTerminal={{
             cliTypeId: selectedWorkflowDetail.mergeTerminalCliId ?? '',
             modelConfigId: selectedWorkflowDetail.mergeTerminalModelId ?? '',
@@ -1090,6 +1138,11 @@ export function Workflows() {
                       {workflow.description}
                     </p>
                   )}
+                  <div className="flex flex-wrap items-center gap-2 mb-4">
+                    <span className="rounded-full bg-secondary px-2 py-1 text-xs font-medium text-normal">
+                      {getExecutionModeLabel(workflow.executionMode, t)}
+                    </span>
+                  </div>
                   <div className="flex items-center justify-between text-xs text-low">
                     <span>
                       {t('management.counts.tasks', { count: workflow.tasksCount })}

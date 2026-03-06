@@ -6,6 +6,10 @@ import type { WizardConfig } from '../types';
 export function validateStep2Tasks(config: WizardConfig): Record<string, string> {
   const errors: Record<string, string> = {};
 
+  if (config.basic.executionMode === 'agent_planned') {
+    return errors;
+  }
+
   if (config.tasks.length === 0) {
     errors.tasks = 'validation.tasks.required';
     return errors;

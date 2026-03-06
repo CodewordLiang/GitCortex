@@ -1,25 +1,31 @@
 import { cn } from '@/lib/utils';
-import { WizardStep, WIZARD_STEPS } from './types';
+import { WizardStep, type WizardStepMeta } from './types';
 import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
   currentStep: WizardStep;
   completedSteps: WizardStep[];
+  steps: WizardStepMeta[];
 }
 
 /**
  * Displays wizard step progress with completion indicators.
  */
-export function StepIndicator({ currentStep, completedSteps }: Readonly<Props>) {
+export function StepIndicator({
+  currentStep,
+  completedSteps,
+  steps,
+}: Readonly<Props>) {
   const { t } = useTranslation('workflow');
+  const currentStepIndex = steps.findIndex((stepInfo) => stepInfo.step === currentStep);
 
   return (
     <div className="flex items-center justify-between w-full mb-8">
-      {WIZARD_STEPS.map((stepInfo, index) => {
+      {steps.map((stepInfo, index) => {
         const isCompleted = completedSteps.includes(stepInfo.step);
         const isCurrent = currentStep === stepInfo.step;
-        const isPast = stepInfo.step < currentStep;
+        const isPast = currentStepIndex >= 0 && index < currentStepIndex;
 
         return (
           <div key={stepInfo.step} className="flex items-center flex-1">
@@ -48,7 +54,7 @@ export function StepIndicator({ currentStep, completedSteps }: Readonly<Props>) 
 
             {/* Connector Line */}
             {/* Connector appears after each step. It's colored if this step is completed or if we're past it. */}
-            {index < WIZARD_STEPS.length - 1 && (
+            {index < steps.length - 1 && (
               <div
                 className={cn(
                   'flex-1 h-0.5 mx-2',
