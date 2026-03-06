@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -32,10 +32,15 @@ import {
   useWorkflow,
   workflowKeys,
   getWorkflowActions,
+  type WorkflowStatusEnum,
   useSubmitWorkflowPromptResponse,
 } from '@/hooks/useWorkflows';
 import { useProjects } from '@/hooks/useProjects';
-import type { WorkflowTaskDto } from 'shared/types';
+import type {
+  WorkflowDetailDto,
+  WorkflowListItemDto,
+  WorkflowTaskDto,
+} from 'shared/types';
 import { WorkflowWizard } from '@/components/workflow/WorkflowWizard';
 import {
   PipelineView,
@@ -50,6 +55,7 @@ import { CreateProjectDialog } from '@/components/ui-new/dialogs/CreateProjectDi
 import { useTranslation } from 'react-i18next';
 import { projectsApi } from '@/lib/api';
 import {
+  type TerminalPromptResponsePayload,
   type TerminalPromptDecisionPayload,
   type TerminalPromptDetectedPayload,
   useWsStore,
@@ -313,6 +319,286 @@ function renderBlockingView({
   return null;
 }
 
+const WORKFLOW_STATUS_MAP: Record<string, WorkflowStatus> = {
+  created: 'idle',
+  starting: 'running',
+  ready: 'idle',
+  running: 'running',
+  paused: 'paused',
+  merging: 'running',
+  completed: 'completed',
+  failed: 'failed',
+  cancelled: 'idle',
+  draft: 'idle',
+};
+
+const WORKFLOW_STATUS_BADGE_CLASSES: Record<string, string> = {
+  created: 'bg-gray-100 text-gray-800',
+  ready: 'bg-gray-100 text-gray-800',
+  draft: 'bg-gray-100 text-gray-800',
+  starting: 'bg-blue-100 text-blue-800',
+  running: 'bg-blue-100 text-blue-800',
+  merging: 'bg-blue-100 text-blue-800',
+  paused: 'bg-yellow-100 text-yellow-800',
+  completed: 'bg-green-100 text-green-800',
+  failed: 'bg-red-100 text-red-800',
+  cancelled: 'bg-zinc-100 text-zinc-800',
+};
+
+function mapWorkflowStatus(status: string): WorkflowStatus {
+  return WORKFLOW_STATUS_MAP[status] ?? 'idle';
+}
+
+function getWorkflowStatusBadgeClass(status: string): string {
+  return WORKFLOW_STATUS_BADGE_CLASSES[status] ?? 'bg-gray-100 text-gray-800';
+}
+
+function mapMergeTerminalStatus(status: string): TerminalStatus {
+  switch (status) {
+    case 'merging':
+      return 'working';
+    case 'completed':
+      return 'completed';
+    case 'failed':
+      return 'failed';
+    case 'cancelled':
+      return 'cancelled';
+    default:
+      return 'not_started';
+  }
+}
+
+function mapWorkflowTasks(
+  dtoTasks: WorkflowTaskDto[] | undefined | null
+): WorkflowTask[] {
+  return [...(dtoTasks ?? [])]
+    .sort((a, b) => a.orderIndex - b.orderIndex)
+    .map((task) => ({
+      id: task.id,
+      name: task.name,
+      branch: task.branch,
+      terminals: [...(task.terminals ?? [])]
+        .sort((a, b) => a.orderIndex - b.orderIndex)
+        .map((terminal) => ({
+          id: terminal.id,
+          workflowTaskId: task.id,
+          cliTypeId: terminal.cliTypeId,
+          modelConfigId: terminal.modelConfigId,
+          role: terminal.role || undefined,
+          orderIndex: terminal.orderIndex,
+          status: terminal.status as TerminalStatus,
+        })),
+    }));
+}
+
+function SelectedWorkflowView({
+  workflow,
+  mutations,
+  onBack,
+  onPrepare,
+  onStart,
+  onPause,
+  onStop,
+  onMerge,
+  onDelete,
+  runAsyncSafely,
+  promptDialog,
+}: Readonly<{
+  workflow: WorkflowDetailDto;
+  mutations: {
+    preparePending: boolean;
+    startPending: boolean;
+    pausePending: boolean;
+    stopPending: boolean;
+    mergePending: boolean;
+  };
+  onBack: () => void;
+  onPrepare: (workflowId: string) => Promise<void>;
+  onStart: (workflowId: string) => Promise<void>;
+  onPause: (workflowId: string) => Promise<void>;
+  onStop: (workflowId: string) => Promise<void>;
+  onMerge: (workflowId: string) => Promise<void>;
+  onDelete: (workflowId: string) => Promise<void>;
+  runAsyncSafely: (task: Promise<unknown>) => void;
+  promptDialog: ReactNode;
+}>) {
+  const { t } = useTranslation('workflow');
+  const actions = getWorkflowActions(workflow.status as WorkflowStatusEnum);
+  const workflowTasks = workflow.tasks ?? [];
+  const hasCompletedAllTasks = workflowTasks.every(
+    (task) => task.status === 'completed'
+  );
+  const canTriggerMerge =
+    actions.canMerge && hasCompletedAllTasks && !mutations.mergePending;
+  const executionModeLabel = getExecutionModeLabel(workflow.executionMode, t);
+
+  return (
+    <div className="h-full min-h-0 overflow-auto space-y-6">
+      <div className="flex items-center justify-between">
+        <Button variant="outline" onClick={onBack}>
+          {`\u2190 ${t('management.backToWorkflows')}`}
+        </Button>
+        <WorkflowDetailActions
+          workflowId={workflow.id}
+          actions={actions}
+          hasCompletedAllTasks={hasCompletedAllTasks}
+          mutations={mutations}
+          handlers={{
+            onPrepare: (workflowId) => {
+              runAsyncSafely(onPrepare(workflowId));
+            },
+            onStart: (workflowId) => {
+              runAsyncSafely(onStart(workflowId));
+            },
+            onPause: (workflowId) => {
+              runAsyncSafely(onPause(workflowId));
+            },
+            onStop: (workflowId) => {
+              runAsyncSafely(onStop(workflowId));
+            },
+            onMerge: (workflowId) => {
+              runAsyncSafely(onMerge(workflowId));
+            },
+            onDelete: (workflowId) => {
+              runAsyncSafely(onDelete(workflowId));
+            },
+          }}
+        />
+      </div>
+
+      <Card>
+        <CardContent className="pt-6 space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="rounded-full bg-secondary px-3 py-1 text-xs font-medium text-normal">
+              {executionModeLabel}
+            </span>
+            <span
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium',
+                getWorkflowStatusBadgeClass(workflow.status)
+              )}
+            >
+              {t(`status.${workflow.status}`, {
+                defaultValue: workflow.status,
+              })}
+            </span>
+          </div>
+          {workflow.initialGoal ? (
+            <div className="space-y-1">
+              <div className="text-xs font-medium uppercase tracking-wide text-low">
+                {t('management.goalLabel')}
+              </div>
+              <div className="text-sm text-normal">{workflow.initialGoal}</div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <PipelineView
+        name={workflow.name}
+        status={mapWorkflowStatus(workflow.status)}
+        executionMode={workflow.executionMode}
+        initialGoal={workflow.initialGoal}
+        tasks={mapWorkflowTasks(workflowTasks)}
+        mergeTerminal={{
+          cliTypeId: workflow.mergeTerminalCliId ?? '',
+          modelConfigId: workflow.mergeTerminalModelId ?? '',
+          status: mapMergeTerminalStatus(workflow.status),
+        }}
+        onTerminalClick={undefined}
+        onMergeTerminalClick={
+          canTriggerMerge
+            ? () => {
+                runAsyncSafely(onMerge(workflow.id));
+              }
+            : undefined
+        }
+      />
+      {promptDialog}
+    </div>
+  );
+}
+
+function WorkflowListContent({
+  showWizard,
+  workflows,
+  onOpenWizard,
+  onSelectWorkflow,
+}: Readonly<{
+  showWizard: boolean;
+  workflows: WorkflowListItemDto[] | undefined;
+  onOpenWizard: () => void;
+  onSelectWorkflow: (workflowId: string) => void;
+}>) {
+  const { t } = useTranslation('workflow');
+
+  if (showWizard) {
+    return null;
+  }
+
+  if (!workflows || workflows.length === 0) {
+    return (
+      <Card className="p-12 text-center">
+        <h3 className="text-lg font-semibold mb-2">{t('empty.title')}</h3>
+        <p className="text-low mb-6">{t('empty.description')}</p>
+        <Button onClick={onOpenWizard}>
+          <Plus className="w-4 h-4 mr-2" />
+          {t('empty.button')}
+        </Button>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {workflows.map((workflow) => (
+        <Card
+          key={workflow.id}
+          className={cn(
+            'cursor-pointer transition-all hover:shadow-lg',
+            'border-2 hover:border-brand'
+          )}
+          onClick={() => onSelectWorkflow(workflow.id)}
+        >
+          <CardContent className="pt-6">
+            <div className="flex items-start justify-between mb-4">
+              <h3 className="font-semibold text-lg">{workflow.name}</h3>
+              <span
+                className={cn(
+                  'px-2 py-1 rounded text-xs font-medium',
+                  getWorkflowStatusBadgeClass(workflow.status)
+                )}
+              >
+                {t(`status.${workflow.status}`, {
+                  defaultValue: workflow.status,
+                })}
+              </span>
+            </div>
+            {workflow.description && (
+              <p className="text-sm text-low mb-4">{workflow.description}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <span className="rounded-full bg-secondary px-2 py-1 text-xs font-medium text-normal">
+                {getExecutionModeLabel(workflow.executionMode, t)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs text-low">
+              <span>
+                {t('management.counts.tasks', { count: workflow.tasksCount })}
+              </span>
+              <span>
+                {t('management.counts.terminals', {
+                  count: workflow.terminalsCount,
+                })}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 export function Workflows() {
   const { t } = useTranslation('workflow');
   const { showToast } = useToast();
@@ -550,7 +836,9 @@ export function Workflows() {
     (
       currentPrompt: WorkflowPromptQueueItem,
       isEnterConfirmResponse: boolean,
-      sendPromptResponseOverWorkflowWs: (payload: any) => boolean
+      sendPromptResponseOverWorkflowWs: (
+        payload: TerminalPromptResponsePayload
+      ) => boolean
     ): boolean => {
       if (!isEnterConfirmResponse) return false;
 
@@ -675,76 +963,6 @@ export function Workflows() {
   const { data: selectedWorkflowDetail } = useWorkflow(
     selectedWorkflowId || ''
   );
-
-  // Helper to map DTO status to PipelineView status
-  const mapWorkflowStatus = (status: string): WorkflowStatus => {
-    const statusMap: Record<string, WorkflowStatus> = {
-      created: 'idle',
-      starting: 'running',
-      ready: 'idle',
-      running: 'running',
-      paused: 'paused',
-      merging: 'running',
-      completed: 'completed',
-      failed: 'failed',
-      cancelled: 'idle',
-      draft: 'idle',
-    };
-    return statusMap[status] || 'idle';
-  };
-
-  const getWorkflowStatusBadgeClass = (status: string): string => {
-    const statusClasses: Record<string, string> = {
-      created: 'bg-gray-100 text-gray-800',
-      ready: 'bg-gray-100 text-gray-800',
-      draft: 'bg-gray-100 text-gray-800',
-      starting: 'bg-blue-100 text-blue-800',
-      running: 'bg-blue-100 text-blue-800',
-      merging: 'bg-blue-100 text-blue-800',
-      paused: 'bg-yellow-100 text-yellow-800',
-      completed: 'bg-green-100 text-green-800',
-      failed: 'bg-red-100 text-red-800',
-      cancelled: 'bg-zinc-100 text-zinc-800',
-    };
-    return statusClasses[status] ?? 'bg-gray-100 text-gray-800';
-  };
-
-  const mapMergeTerminalStatus = (status: string): TerminalStatus => {
-    switch (status) {
-      case 'merging':
-        return 'working';
-      case 'completed':
-        return 'completed';
-      case 'failed':
-        return 'failed';
-      case 'cancelled':
-        return 'cancelled';
-      default:
-        return 'not_started';
-    }
-  };
-
-  // Helper to map DTO tasks to PipelineView tasks
-  const mapWorkflowTasks = (dtoTasks: WorkflowTaskDto[] | undefined | null): WorkflowTask[] => {
-    return [...(dtoTasks ?? [])]
-      .sort((a, b) => a.orderIndex - b.orderIndex)
-      .map((task) => ({
-      id: task.id,
-      name: task.name,
-      branch: task.branch,
-      terminals: [...(task.terminals ?? [])]
-        .sort((a, b) => a.orderIndex - b.orderIndex)
-        .map((terminal) => ({
-        id: terminal.id,
-        workflowTaskId: task.id,
-        cliTypeId: terminal.cliTypeId,
-        modelConfigId: terminal.modelConfigId,
-        role: terminal.role || undefined,
-        orderIndex: terminal.orderIndex,
-        status: terminal.status as TerminalStatus,
-      })),
-    }));
-  };
 
   // Handle project change (preserve other URL params)
   const handleProjectChange = (newProjectId: string) => {
@@ -918,110 +1136,26 @@ export function Workflows() {
   };
 
   if (selectedWorkflowDetail && selectedWorkflowId) {
-    const actions = getWorkflowActions(selectedWorkflowDetail.status as any);
-    const workflowTasks = selectedWorkflowDetail.tasks ?? [];
-    const hasCompletedAllTasks = workflowTasks.every(
-      (task) => task.status === 'completed'
-    );
-    const canTriggerMerge =
-      actions.canMerge && hasCompletedAllTasks && !mergeMutation.isPending;
-    const executionModeLabel = getExecutionModeLabel(
-      selectedWorkflowDetail.executionMode,
-      t
-    );
-
     return (
-      <div className="h-full min-h-0 overflow-auto space-y-6">
-        <div className="flex items-center justify-between">
-          <Button variant="outline" onClick={() => setSelectedWorkflowId(null)}>
-            {`\u2190 ${t('management.backToWorkflows')}`}
-          </Button>
-          <WorkflowDetailActions
-            workflowId={selectedWorkflowDetail.id}
-            actions={actions}
-            hasCompletedAllTasks={hasCompletedAllTasks}
-            mutations={{
-              preparePending: prepareMutation.isPending,
-              startPending: startMutation.isPending,
-              pausePending: pauseMutation.isPending,
-              stopPending: stopMutation.isPending,
-              mergePending: mergeMutation.isPending,
-            }}
-            handlers={{
-              onPrepare: (workflowId) => {
-                runAsyncSafely(handlePrepareWorkflow(workflowId));
-              },
-              onStart: (workflowId) => {
-                runAsyncSafely(handleStartWorkflow(workflowId));
-              },
-              onPause: (workflowId) => {
-                runAsyncSafely(handlePauseWorkflow(workflowId));
-              },
-              onStop: (workflowId) => {
-                runAsyncSafely(handleStopWorkflow(workflowId));
-              },
-              onMerge: (workflowId) => {
-                runAsyncSafely(handleMergeWorkflow(workflowId));
-              },
-              onDelete: (workflowId) => {
-                runAsyncSafely(handleDeleteWorkflow(workflowId));
-              },
-            }}
-          />
-        </div>
-
-        <Card>
-          <CardContent className="pt-6 space-y-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="rounded-full bg-secondary px-3 py-1 text-xs font-medium text-normal">
-                {executionModeLabel}
-              </span>
-              <span
-                className={cn(
-                  'rounded-full px-3 py-1 text-xs font-medium',
-                  getWorkflowStatusBadgeClass(selectedWorkflowDetail.status)
-                )}
-              >
-                {t(`status.${selectedWorkflowDetail.status}`, {
-                  defaultValue: selectedWorkflowDetail.status,
-                })}
-              </span>
-            </div>
-            {selectedWorkflowDetail.initialGoal ? (
-              <div className="space-y-1">
-                <div className="text-xs font-medium uppercase tracking-wide text-low">
-                  {t('management.goalLabel')}
-                </div>
-                <div className="text-sm text-normal">
-                  {selectedWorkflowDetail.initialGoal}
-                </div>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-
-        <PipelineView
-          name={selectedWorkflowDetail.name}
-          status={mapWorkflowStatus(selectedWorkflowDetail.status)}
-          executionMode={selectedWorkflowDetail.executionMode}
-          initialGoal={selectedWorkflowDetail.initialGoal}
-          tasks={mapWorkflowTasks(workflowTasks)}
-          mergeTerminal={{
-            cliTypeId: selectedWorkflowDetail.mergeTerminalCliId ?? '',
-            modelConfigId: selectedWorkflowDetail.mergeTerminalModelId ?? '',
-            status: mapMergeTerminalStatus(selectedWorkflowDetail.status),
-          }}
-          onTerminalClick={undefined}
-          onMergeTerminalClick={
-            canTriggerMerge
-              ? () => {
-                runAsyncSafely(handleMergeWorkflow(selectedWorkflowDetail.id));
-              }
-              : undefined
-          }
-        />
-        {promptDialog}
-      </div>
+      <SelectedWorkflowView
+        workflow={selectedWorkflowDetail}
+        mutations={{
+          preparePending: prepareMutation.isPending,
+          startPending: startMutation.isPending,
+          pausePending: pauseMutation.isPending,
+          stopPending: stopMutation.isPending,
+          mergePending: mergeMutation.isPending,
+        }}
+        onBack={() => setSelectedWorkflowId(null)}
+        onPrepare={handlePrepareWorkflow}
+        onStart={handleStartWorkflow}
+        onPause={handlePauseWorkflow}
+        onStop={handleStopWorkflow}
+        onMerge={handleMergeWorkflow}
+        onDelete={handleDeleteWorkflow}
+        runAsyncSafely={runAsyncSafely}
+        promptDialog={promptDialog}
+      />
     );
   }
 
@@ -1098,66 +1232,12 @@ export function Workflows() {
         />
       )}
 
-      {!showWizard &&
-        (!workflows || workflows.length === 0 ? (
-          <Card className="p-12 text-center">
-            <h3 className="text-lg font-semibold mb-2">{t('empty.title')}</h3>
-            <p className="text-low mb-6">{t('empty.description')}</p>
-            <Button onClick={() => setShowWizard(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              {t('empty.button')}
-            </Button>
-          </Card>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {workflows.map((workflow) => (
-              <Card
-                key={workflow.id}
-                className={cn(
-                  'cursor-pointer transition-all hover:shadow-lg',
-                  'border-2 hover:border-brand'
-                )}
-                onClick={() => setSelectedWorkflowId(workflow.id)}
-              >
-                <CardContent className="pt-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <h3 className="font-semibold text-lg">{workflow.name}</h3>
-                    <span
-                      className={cn(
-                        'px-2 py-1 rounded text-xs font-medium',
-                        getWorkflowStatusBadgeClass(workflow.status)
-                      )}
-                    >
-                      {t(`status.${workflow.status}`, {
-                        defaultValue: workflow.status,
-                      })}
-                    </span>
-                  </div>
-                  {workflow.description && (
-                    <p className="text-sm text-low mb-4">
-                      {workflow.description}
-                    </p>
-                  )}
-                  <div className="flex flex-wrap items-center gap-2 mb-4">
-                    <span className="rounded-full bg-secondary px-2 py-1 text-xs font-medium text-normal">
-                      {getExecutionModeLabel(workflow.executionMode, t)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-low">
-                    <span>
-                      {t('management.counts.tasks', { count: workflow.tasksCount })}
-                    </span>
-                    <span>
-                      {t('management.counts.terminals', {
-                        count: workflow.terminalsCount,
-                      })}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ))}
+      <WorkflowListContent
+        showWizard={showWizard}
+        workflows={workflows}
+        onOpenWizard={() => setShowWizard(true)}
+        onSelectWorkflow={(workflowId) => setSelectedWorkflowId(workflowId)}
+      />
       {promptDialog}
     </div>
   );

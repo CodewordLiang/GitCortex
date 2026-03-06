@@ -3,7 +3,6 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { TerminalCard, type Terminal } from './TerminalCard';
 import { useTranslation } from 'react-i18next';
-import type { WorkflowExecutionMode } from './types';
 
 /** Workflow runtime status */
 export type WorkflowStatus =
@@ -34,7 +33,7 @@ interface PipelineViewProps {
   /** Current workflow status */
   status: WorkflowStatus;
   /** Workflow creation mode */
-  executionMode?: WorkflowExecutionMode | string;
+  executionMode?: string;
   /** Initial goal for agent-planned workflows */
   initialGoal?: string | null;
   /** Array of tasks with their terminals */
