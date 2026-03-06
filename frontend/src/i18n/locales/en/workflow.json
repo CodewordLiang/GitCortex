@@ -92,8 +92,19 @@
   "step1": {
     "nameLabel": "Workflow name",
     "namePlaceholder": "e.g. Refactor authentication",
+    "modeLabel": "Execution mode",
+    "modeHint": "Choose whether you want to predefine the workflow graph or let the orchestrator plan it at runtime.",
+    "diyTitle": "DIY",
+    "diyDescription": "Predefine tasks, terminals, CLI selection, and terminal roles before the workflow starts.",
+    "agentPlannedTitle": "Agent Planned",
+    "agentPlannedDescription": "Start from a goal and let the orchestrator create tasks and terminals dynamically while the workflow runs.",
+    "initialGoalLabel": "Initial goal",
+    "initialGoalPlaceholder": "Describe the outcome the orchestrator should achieve...",
+    "initialGoalHint": "This becomes the first planning objective for agent-planned workflows.",
     "descriptionLabel": "Workflow description (optional)",
     "descriptionPlaceholder": "Briefly describe the goal and scope...",
+    "planningHintsLabel": "Planning hints (optional)",
+    "planningHintsPlaceholder": "Add constraints, implementation notes, or priorities for the orchestrator...",
     "taskCountLabel": "How many parallel tasks?",
     "taskCountOption_one": "{{count}} task",
     "taskCountOption_other": "{{count}} tasks",
@@ -311,7 +322,8 @@
     },
     "basic": {
       "nameRequired": "Workflow name is required",
-      "taskCountMin": "Task count must be at least 1"
+      "taskCountMin": "Task count must be at least 1",
+      "initialGoalRequired": "Initial goal is required for agent-planned workflows"
     },
     "tasks": {
       "required": "At least one task is required",
@@ -360,6 +372,10 @@
       "completed": "Completed",
       "failed": "Failed"
     },
+    "emptyTitle": "No tasks yet",
+    "emptyDescription": "This workflow does not have any tasks to display yet.",
+    "emptyDescriptionAgentPlanned": "Agent-planned workflows can start with an empty graph. Tasks and terminals will appear here after planning begins.",
+    "initialGoalLabel": "Initial goal",
     "taskLabel": "Task {{index}}",
     "mergeTerminalRole": "Merge Terminal",
     "terminalsCount": "{{count}} terminals",
@@ -379,6 +395,8 @@
     "listTitle": "Terminal list",
     "clear": "Clear",
     "restart": "Restart",
+    "emptyTitle": "No terminals yet",
+    "emptyDescription": "Terminals will appear here as soon as the workflow creates or prepares them.",
     "selectPrompt": "Select a terminal to start debugging",
     "starting": "Starting terminal...",
     "historyTitle": "Terminal history",
@@ -450,6 +468,11 @@
       "terminals_one": "{{count}} terminal",
       "terminals_other": "{{count}} terminals"
     },
+    "mode": {
+      "diy": "DIY",
+      "agent_planned": "Agent Planned"
+    },
+    "goalLabel": "Initial goal",
     "actions": {
       "prepare": "Prepare Workflow",
       "preparing": "Preparing...",
@@ -484,6 +507,9 @@
       "failed": "Failed",
       "cancelled": "Cancelled"
     },
+    "emptyTitle": "No tasks yet",
+    "emptyDescription": "This workflow does not have any task cards yet.",
+    "emptyDescriptionAgentPlanned": "Agent-planned workflows may start empty. Task cards will appear here when the orchestrator expands the execution graph.",
     "selectWorkflow": "Select a workflow",
     "loading": "Loading..."
   },
@@ -492,6 +518,7 @@
     "active": "{{count}} active",
     "selectWorkflow": "Select a workflow to view terminal activity.",
     "loading": "Loading terminal activity...",
+    "noTerminalsYet": "No terminals yet.",
     "noActive": "No active terminals.",
     "defaultLabel": "Terminal",
     "timeAgo": {

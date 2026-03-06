@@ -1,4 +1,4 @@
-import { useWorkflowStore } from '@/stores/workflowStore';
+import { useWorkflow } from '@/hooks/useWorkflows';
 import { useWsStore } from '@/stores/wsStore';
 
 interface StatusBarProps {
@@ -6,9 +6,7 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ workflowId }: Readonly<StatusBarProps>) {
-  const workflow = useWorkflowStore((state) =>
-    workflowId ? state.workflows.get(workflowId) : undefined
-  );
+  const { data: workflow } = useWorkflow(workflowId ?? '');
   const connectionStatus = useWsStore((state) =>
     workflowId
       ? state.getWorkflowConnectionStatus(workflowId)
@@ -18,7 +16,7 @@ export function StatusBar({ workflowId }: Readonly<StatusBarProps>) {
   // Count running terminals across all tasks
   // Note: Backend uses 'working' for active terminals, frontend may also see 'running'
   const runningTerminalsCount =
-    workflow?.tasks.reduce((count, task) => {
+    (workflow?.tasks ?? []).reduce((count, task) => {
       return count + task.terminals.filter(
         (t) => t.status === 'working' || t.status === 'running'
       ).length;

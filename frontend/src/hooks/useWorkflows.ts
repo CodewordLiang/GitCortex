@@ -265,6 +265,19 @@ interface UseWorkflowOptions {
   retry?: number | boolean;
 }
 
+function normalizeWorkflowDetail(workflow: Workflow): Workflow {
+  return {
+    ...workflow,
+    tasks: Array.isArray(workflow.tasks)
+      ? workflow.tasks.map((task) => ({
+          ...task,
+          terminals: Array.isArray(task.terminals) ? task.terminals : [],
+        }))
+      : [],
+    commands: Array.isArray(workflow.commands) ? workflow.commands : [],
+  };
+}
+
 // ============================================================================
 // Workflow API
 // ============================================================================
@@ -287,7 +300,8 @@ const workflowsApi = {
     const response = await fetch(
       `/api/workflows/${encodeURIComponent(workflowId)}`
     );
-    return handleApiResponse<Workflow>(response);
+    const workflow = await handleApiResponse<Workflow>(response);
+    return normalizeWorkflowDetail(workflow);
   },
 
   /**
@@ -299,7 +313,8 @@ const workflowsApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    return handleApiResponse<Workflow>(response);
+    const workflow = await handleApiResponse<Workflow>(response);
+    return normalizeWorkflowDetail(workflow);
   },
 
   /**
@@ -690,7 +705,7 @@ export function useUpdateTaskStatus() {
       if (previousWorkflow) {
         queryClient.setQueryData<Workflow>(workflowKeys.byId(workflowId), {
           ...previousWorkflow,
-          tasks: previousWorkflow.tasks.map((task) =>
+          tasks: (previousWorkflow.tasks ?? []).map((task) =>
             task.id === taskId ? { ...task, status } : task
           ),
         });

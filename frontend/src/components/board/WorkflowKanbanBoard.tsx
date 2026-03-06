@@ -97,6 +97,25 @@ export function WorkflowKanbanBoard({ workflowId }: Readonly<WorkflowKanbanBoard
     return <div className="p-6 text-low">{t('kanban.loading')}</div>;
   }
 
+  if (tasks.length === 0) {
+    const isAgentPlanned = workflow?.executionMode === 'agent_planned';
+
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="max-w-lg rounded border border-dashed border-border bg-panel p-6 text-center">
+          <div className="text-base font-semibold text-high">
+            {t('kanban.emptyTitle')}
+          </div>
+          <div className="mt-2 text-sm text-low">
+            {isAgentPlanned
+              ? t('kanban.emptyDescriptionAgentPlanned')
+              : t('kanban.emptyDescription')}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <DndContext onDragEnd={handleDragEnd}>
       <div className="flex-1 p-6 grid grid-cols-6 gap-4">

@@ -14,6 +14,7 @@ interface TaskPipelineProps {
  */
 function TaskColumn({ task, isLast }: Readonly<{ task: WorkflowTaskDto; isLast: boolean }>) {
   const { t } = useTranslation('workflow');
+  const terminals = task.terminals ?? [];
 
   return (
     <div className="flex items-start gap-4">
@@ -28,16 +29,16 @@ function TaskColumn({ task, isLast }: Readonly<{ task: WorkflowTaskDto; isLast: 
             </span>
           </div>
           <div className="text-[10px] text-low">
-            {t('pipeline.terminalsCount', { count: task.terminals.length })}
+            {t('pipeline.terminalsCount', { count: terminals.length })}
           </div>
         </div>
 
         {/* Terminal nodes */}
-        {task.terminals.map((terminal, idx) => (
+        {terminals.map((terminal, idx) => (
           <div key={terminal.id} className="relative">
             <TerminalNode terminal={terminal} taskName={task.name} />
             {/* Vertical connector between terminals */}
-            {idx < task.terminals.length - 1 && (
+            {idx < terminals.length - 1 && (
               <div className="absolute left-1/2 -translate-x-1/2 top-full h-3 w-px bg-border" />
             )}
           </div>
@@ -60,6 +61,7 @@ export function TaskPipeline({ workflowId }: Readonly<TaskPipelineProps>) {
   const { data: workflow } = useWorkflow(workflowId);
   const tasks = workflow?.tasks ?? [];
   const commands = workflow?.commands ?? [];
+  const isAgentPlanned = workflow?.executionMode === 'agent_planned';
 
   return (
     <div className="flex-1 p-6 overflow-x-auto">
@@ -82,25 +84,36 @@ export function TaskPipeline({ workflowId }: Readonly<TaskPipelineProps>) {
       )}
 
       {/* Pipeline visualization */}
-      <div className="flex gap-2 min-w-max items-start">
-        {tasks.map((task, idx) => (
-          <TaskColumn
-            key={task.id}
-            task={task}
-            isLast={idx === tasks.length - 1}
-          />
-        ))}
+      {tasks.length === 0 ? (
+        <div className="rounded border border-dashed border-border bg-panel px-6 py-8 text-center">
+          <div className="text-sm font-medium text-high">
+            {t('pipeline.emptyTitle')}
+          </div>
+          <div className="mt-2 text-xs text-low">
+            {isAgentPlanned
+              ? t('pipeline.emptyDescriptionAgentPlanned')
+              : t('pipeline.emptyDescription')}
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2 min-w-max items-start">
+          {tasks.map((task, idx) => (
+            <TaskColumn
+              key={task.id}
+              task={task}
+              isLast={idx === tasks.length - 1}
+            />
+          ))}
 
-        {/* Arrow to merge terminal */}
-        {tasks.length > 0 && (
+          {/* Arrow to merge terminal */}
           <div className="flex items-center self-center mt-16">
             <div className="w-6 h-px bg-border" />
             <ArrowRight className="w-4 h-4 text-low" />
           </div>
-        )}
 
-        <MergeTerminalNode workflowId={workflowId} />
-      </div>
+          <MergeTerminalNode workflowId={workflowId} />
+        </div>
+      )}
 
       {/* Bottom hint */}
       <div className="mt-6 text-xs text-low text-center">

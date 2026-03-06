@@ -14,8 +14,16 @@ export enum WizardStep {
   Advanced = 6,     // 步骤6: 高级配置
 }
 
+export type WorkflowExecutionMode = 'diy' | 'agent_planned';
+
+export interface WizardStepMeta {
+  step: WizardStep;
+  nameKey: string;
+  descriptionKey: string;
+}
+
 /** 向导步骤元数据 */
-export const WIZARD_STEPS = [
+export const WIZARD_STEPS: readonly WizardStepMeta[] = [
   {
     step: WizardStep.Project,
     nameKey: 'steps.project.name',
@@ -53,6 +61,35 @@ export const WIZARD_STEPS = [
   },
 ] as const;
 
+const AGENT_PLANNED_HIDDEN_STEPS = new Set<WizardStep>([
+  WizardStep.Tasks,
+  WizardStep.Terminals,
+]);
+
+export function isAgentPlannedMode(
+  executionMode: WorkflowExecutionMode | undefined
+): executionMode is 'agent_planned' {
+  return executionMode === 'agent_planned';
+}
+
+export function getVisibleWizardSteps(
+  executionMode: WorkflowExecutionMode = 'diy'
+): WizardStepMeta[] {
+  if (!isAgentPlannedMode(executionMode)) {
+    return [...WIZARD_STEPS];
+  }
+
+  return WIZARD_STEPS.filter(
+    (stepMeta) => !AGENT_PLANNED_HIDDEN_STEPS.has(stepMeta.step)
+  );
+}
+
+export function getVisibleWizardStepIds(
+  executionMode: WorkflowExecutionMode = 'diy'
+): WizardStep[] {
+  return getVisibleWizardSteps(executionMode).map((stepMeta) => stepMeta.step);
+}
+
 /** Git 仓库状态 */
 export interface GitStatus {
   isGitRepo: boolean;
@@ -72,6 +109,8 @@ export interface ProjectConfig {
 export interface BasicConfig {
   name: string;
   description?: string;
+  executionMode: WorkflowExecutionMode;
+  initialGoal?: string;
   taskCount: number;
   importFromKanban: boolean;
   kanbanTaskIds?: string[];
@@ -168,6 +207,8 @@ export function getDefaultWizardConfig(): WizardConfig {
     },
     basic: {
       name: '',
+      executionMode: 'diy',
+      initialGoal: '',
       taskCount: 1,
       importFromKanban: false,
     },
@@ -207,6 +248,9 @@ export function wizardConfigToCreateRequest(
   projectId: string,
   config: WizardConfig
 ): CreateWorkflowRequest {
+  const executionMode = config.basic.executionMode;
+  const isAgentPlanned = isAgentPlannedMode(executionMode);
+
   // Build orchestrator config from models
   const orchestratorModel = config.models.find(m => m.id === config.advanced.orchestrator.modelConfigId);
   if (!orchestratorModel) {
@@ -221,46 +265,12 @@ export function wizardConfigToCreateRequest(
       : undefined;
   };
 
-  const request: CreateWorkflowRequest = {
-    projectId,
-    name: config.basic.name,
-    description: config.basic.description,
-    useSlashCommands: config.commands.enabled,
-    commandPresetIds: config.commands.presetIds.length > 0 ? config.commands.presetIds : undefined,
-    commands: config.commands.presetIds.map((presetId, index) => ({
-      presetId,
-      orderIndex: index,
-      customParams: config.commands.customParams?.[presetId]
-        ? JSON.stringify(config.commands.customParams[presetId])
-        : null,
-    })),
-    orchestratorConfig: {
-      apiType: orchestratorModel.apiType,
-      baseUrl: orchestratorModel.baseUrl,
-      apiKey: orchestratorModel.apiKey,
-      model: orchestratorModel.modelId,
-    },
-    errorTerminalConfig: config.advanced.errorTerminal.enabled ? {
-      cliTypeId: config.advanced.errorTerminal.cliTypeId!,
-      modelConfigId: config.advanced.errorTerminal.modelConfigId!,
-      modelConfig: toInlineModelConfig(config.advanced.errorTerminal.modelConfigId),
-      customBaseUrl: null,
-      customApiKey: null,
-    } : undefined,
-    mergeTerminalConfig: {
-      cliTypeId: config.advanced.mergeTerminal.cliTypeId,
-      modelConfigId: config.advanced.mergeTerminal.modelConfigId,
-      modelConfig: toInlineModelConfig(config.advanced.mergeTerminal.modelConfigId),
-      customBaseUrl: null,
-      customApiKey: null,
-    },
-    targetBranch: config.advanced.targetBranch,
-    gitWatcherEnabled: config.advanced.gitWatcherEnabled,
-    tasks: config.tasks.map((task, taskIndex) => {
-        // Find terminals for this task
+  const tasks = isAgentPlanned
+    ? []
+    : config.tasks.map((task, taskIndex) => {
         const taskTerminals = config.terminals
-          .filter(t => t.taskId === task.id)
-          .sort((a, b) => a.orderIndex - b.orderIndex);
+          .filter((terminal) => terminal.taskId === task.id)
+          .sort((left, right) => left.orderIndex - right.orderIndex);
 
         if (taskTerminals.length !== task.terminalCount) {
           throw new Error(
@@ -274,8 +284,10 @@ export function wizardConfigToCreateRequest(
           description: task.description,
           branch: task.branch,
           orderIndex: taskIndex,
-          terminals: taskTerminals.map(terminal => {
-            const model = config.models.find(m => m.id === terminal.modelConfigId);
+          terminals: taskTerminals.map((terminal) => {
+            const model = config.models.find(
+              (candidate) => candidate.id === terminal.modelConfigId
+            );
             if (!model) {
               throw new Error(`Model not found for terminal ${terminal.id}`);
             }
@@ -297,7 +309,57 @@ export function wizardConfigToCreateRequest(
             };
           }),
         };
-      }),
+      });
+
+  const request: CreateWorkflowRequest = {
+    projectId,
+    name: config.basic.name,
+    description: config.basic.description,
+    executionMode,
+    initialGoal: isAgentPlanned
+      ? config.basic.initialGoal?.trim() || undefined
+      : undefined,
+    useSlashCommands: config.commands.enabled,
+    commandPresetIds:
+      config.commands.presetIds.length > 0
+        ? config.commands.presetIds
+        : undefined,
+    commands: config.commands.presetIds.map((presetId, index) => ({
+      presetId,
+      orderIndex: index,
+      customParams: config.commands.customParams?.[presetId]
+        ? JSON.stringify(config.commands.customParams[presetId])
+        : null,
+    })),
+    orchestratorConfig: {
+      apiType: orchestratorModel.apiType,
+      baseUrl: orchestratorModel.baseUrl,
+      apiKey: orchestratorModel.apiKey,
+      model: orchestratorModel.modelId,
+    },
+    errorTerminalConfig: config.advanced.errorTerminal.enabled
+      ? {
+          cliTypeId: config.advanced.errorTerminal.cliTypeId!,
+          modelConfigId: config.advanced.errorTerminal.modelConfigId!,
+          modelConfig: toInlineModelConfig(
+            config.advanced.errorTerminal.modelConfigId
+          ),
+          customBaseUrl: null,
+          customApiKey: null,
+        }
+      : undefined,
+    mergeTerminalConfig: {
+      cliTypeId: config.advanced.mergeTerminal.cliTypeId,
+      modelConfigId: config.advanced.mergeTerminal.modelConfigId,
+      modelConfig: toInlineModelConfig(
+        config.advanced.mergeTerminal.modelConfigId
+      ),
+      customBaseUrl: null,
+      customApiKey: null,
+    },
+    targetBranch: config.advanced.targetBranch,
+    gitWatcherEnabled: config.advanced.gitWatcherEnabled,
+    tasks,
   };
 
   return request;

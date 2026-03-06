@@ -64,6 +64,27 @@ export function TerminalDebugView({ tasks, wsUrl }: Readonly<Props>) {
     task.terminals.map((terminal) => ({ ...terminal, taskName: task.name }))
   );
 
+  useEffect(() => {
+    if (allTerminals.length === 0) {
+      if (selectedTerminalId !== null) {
+        setSelectedTerminalId(null);
+      }
+      return;
+    }
+
+    if (!selectedTerminalId) {
+      setSelectedTerminalId(allTerminals[0].id);
+      return;
+    }
+
+    const selectedStillExists = allTerminals.some(
+      (terminal) => terminal.id === selectedTerminalId
+    );
+    if (!selectedStillExists) {
+      setSelectedTerminalId(allTerminals[0].id);
+    }
+  }, [allTerminals, selectedTerminalId]);
+
   const selectedTerminal = allTerminals.find((terminal) => terminal.id === selectedTerminalId);
 
   const getTerminalLabel = (terminal: Terminal) => {
@@ -375,37 +396,46 @@ export function TerminalDebugView({ tasks, wsUrl }: Readonly<Props>) {
         <div className="p-4 border-b">
           <h3 className="font-semibold">{t('terminalDebug.listTitle')}</h3>
         </div>
-        <ul className="p-2">
-          {allTerminals.map((terminal) => {
-            const terminalLabel = getTerminalLabel(terminal);
-            const statusLabel = getStatusLabel(terminal.status);
+        {allTerminals.length === 0 ? (
+          <div className="p-4 text-sm text-muted-foreground">
+            <div className="font-medium text-foreground">
+              {t('terminalDebug.emptyTitle')}
+            </div>
+            <div className="mt-2">{t('terminalDebug.emptyDescription')}</div>
+          </div>
+        ) : (
+          <ul className="p-2">
+            {allTerminals.map((terminal) => {
+              const terminalLabel = getTerminalLabel(terminal);
+              const statusLabel = getStatusLabel(terminal.status);
 
-            return (
-              <li key={terminal.id}>
-                <button
-                  aria-label={`${terminalLabel} - ${statusLabel}`}
-                  aria-current={selectedTerminalId === terminal.id ? 'true' : 'false'}
-                  className={cn(
-                    'w-full p-3 rounded-lg text-left mb-2 transition-colors',
-                    selectedTerminalId === terminal.id
-                      ? 'bg-primary text-primary-foreground'
-                      : 'hover:bg-muted'
-                  )}
-                  onClick={() => {
-                    setSelectedTerminalId(terminal.id);
-                  }}
-                >
-                  <div className="font-medium text-sm">{terminalLabel}</div>
-                  <div className="text-xs opacity-70">{terminal.taskName}</div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <StatusDot status={terminal.status} />
-                    <span className="text-xs">{statusLabel}</span>
-                  </div>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+              return (
+                <li key={terminal.id}>
+                  <button
+                    aria-label={`${terminalLabel} - ${statusLabel}`}
+                    aria-current={selectedTerminalId === terminal.id ? 'true' : 'false'}
+                    className={cn(
+                      'w-full p-3 rounded-lg text-left mb-2 transition-colors',
+                      selectedTerminalId === terminal.id
+                        ? 'bg-primary text-primary-foreground'
+                        : 'hover:bg-muted'
+                    )}
+                    onClick={() => {
+                      setSelectedTerminalId(terminal.id);
+                    }}
+                  >
+                    <div className="font-medium text-sm">{terminalLabel}</div>
+                    <div className="text-xs opacity-70">{terminal.taskName}</div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <StatusDot status={terminal.status} />
+                      <span className="text-xs">{statusLabel}</span>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
 
       <div className="flex-1 flex flex-col">

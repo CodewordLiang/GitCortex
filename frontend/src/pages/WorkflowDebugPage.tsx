@@ -37,6 +37,7 @@ export function WorkflowDebugPage() {
     refetchInterval: 1500,
     staleTime: 0,
   });
+  const workflowTasks = workflow?.tasks ?? [];
 
   if (isLoading) return <div className="p-6 text-low">Loading...</div>;
   if (!workflow) return <div className="p-6 text-low">Workflow not found</div>;
@@ -47,22 +48,24 @@ export function WorkflowDebugPage() {
   const wsUrl = `${wsProtocol}://${globalThis.location.host}/api`;
 
   // Map WorkflowTaskDto to WorkflowTask with Terminal type conversion
-  const tasks: (WorkflowTask & { terminals: Terminal[] })[] = workflow.tasks.map((taskDto) => ({
-    id: taskDto.id,
-    name: taskDto.name,
-    branch: taskDto.branch,
-    terminals: taskDto.terminals.map(
-      (termDto): Terminal => ({
-        id: termDto.id,
-        workflowTaskId: termDto.workflowTaskId,
-        cliTypeId: termDto.cliTypeId,
-        modelConfigId: termDto.modelConfigId ?? undefined,
-        role: termDto.role ?? undefined,
-        orderIndex: termDto.orderIndex,
-        status: mapTerminalStatus(termDto.status),
-      })
-    ),
-  }));
+  const tasks: (WorkflowTask & { terminals: Terminal[] })[] = workflowTasks.map(
+    (taskDto) => ({
+      id: taskDto.id,
+      name: taskDto.name,
+      branch: taskDto.branch,
+      terminals: (taskDto.terminals ?? []).map(
+        (termDto): Terminal => ({
+          id: termDto.id,
+          workflowTaskId: termDto.workflowTaskId,
+          cliTypeId: termDto.cliTypeId,
+          modelConfigId: termDto.modelConfigId ?? undefined,
+          role: termDto.role ?? undefined,
+          orderIndex: termDto.orderIndex,
+          status: mapTerminalStatus(termDto.status),
+        })
+      ),
+    })
+  );
 
   return (
     <div className="flex h-screen bg-primary">

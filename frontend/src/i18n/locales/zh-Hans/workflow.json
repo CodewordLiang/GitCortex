@@ -91,8 +91,19 @@
   "step1": {
     "nameLabel": "工作流名称",
     "namePlaceholder": "例如：重构认证流程",
+    "modeLabel": "执行模式",
+    "modeHint": "选择是由你预先定义执行图，还是让 Orchestrator 在运行时动态规划任务和终端。",
+    "diyTitle": "DIY",
+    "diyDescription": "在启动前手动定义任务、终端、CLI 选择以及终端角色。",
+    "agentPlannedTitle": "AgentPlanned",
+    "agentPlannedDescription": "从目标出发，让 Orchestrator 在运行中动态创建任务和终端。",
+    "initialGoalLabel": "初始目标",
+    "initialGoalPlaceholder": "描述希望 Orchestrator 最终达成的结果...",
+    "initialGoalHint": "该目标会作为 AgentPlanned 工作流的首轮规划输入。",
     "descriptionLabel": "工作流描述（可选）",
     "descriptionPlaceholder": "简要描述目标和范围...",
+    "planningHintsLabel": "规划提示（可选）",
+    "planningHintsPlaceholder": "补充约束、实现偏好或优先级，帮助 Orchestrator 规划...",
     "taskCountLabel": "并行任务数量",
     "taskCountOption_one": "{{count}} 个任务",
     "taskCountOption_other": "{{count}} 个任务",
@@ -310,7 +321,8 @@
     },
     "basic": {
       "nameRequired": "请输入工作流名称",
-      "taskCountMin": "任务数量至少为 1"
+      "taskCountMin": "任务数量至少为 1",
+      "initialGoalRequired": "AgentPlanned 工作流必须填写初始目标"
     },
     "tasks": {
       "required": "至少需要一个任务",
@@ -359,6 +371,10 @@
       "completed": "已完成",
       "failed": "失败"
     },
+    "emptyTitle": "暂无任务",
+    "emptyDescription": "当前工作流还没有可展示的任务。",
+    "emptyDescriptionAgentPlanned": "AgentPlanned 工作流允许以空图启动。Orchestrator 完成规划后，任务和终端会出现在这里。",
+    "initialGoalLabel": "初始目标",
     "taskLabel": "任务 {{index}}",
     "mergeTerminalRole": "合并终端",
     "terminalsCount": "{{count}} 个终端",
@@ -378,6 +394,8 @@
     "listTitle": "终端列表",
     "clear": "清空",
     "restart": "重启",
+    "emptyTitle": "暂无终端",
+    "emptyDescription": "当工作流创建或准备好终端后，它们会显示在这里。",
     "selectPrompt": "选择一个终端开始调试",
     "starting": "正在启动终端...",
     "historyTitle": "终端历史",
@@ -449,6 +467,11 @@
       "terminals_one": "{{count}} 个终端",
       "terminals_other": "{{count}} 个终端"
     },
+    "mode": {
+      "diy": "DIY",
+      "agent_planned": "AgentPlanned"
+    },
+    "goalLabel": "初始目标",
     "actions": {
       "prepare": "预处理工作流",
       "preparing": "预处理中...",
@@ -483,6 +506,9 @@
       "failed": "失败",
       "cancelled": "已取消"
     },
+    "emptyTitle": "暂无任务",
+    "emptyDescription": "当前工作流还没有任务卡片。",
+    "emptyDescriptionAgentPlanned": "AgentPlanned 工作流可以先为空。Orchestrator 扩展执行图后，任务卡片会显示在这里。",
     "selectWorkflow": "选择工作流",
     "loading": "加载中..."
   },
@@ -491,6 +517,7 @@
     "active": "{{count}} 个活跃",
     "selectWorkflow": "选择工作流以查看终端活动",
     "loading": "加载终端活动中...",
+    "noTerminalsYet": "暂无终端。",
     "noActive": "没有活跃的终端",
     "defaultLabel": "终端",
     "timeAgo": {
