@@ -19,6 +19,7 @@ import {
 } from '../../ui-new/primitives/Dialog';
 import { IconButton } from '../../ui-new/primitives/IconButton';
 import { cn } from '@/lib/utils';
+import { CLI_TYPES } from '../constants';
 import type { WizardConfig, ModelConfig, ApiType } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useModelStore } from '@/stores/modelStore';
@@ -55,6 +56,7 @@ const API_TYPES = {
 
 interface ModelFormData {
   displayName: string;
+  cliTypeId: string;
   apiType: ApiType;
   baseUrl: string;
   apiKey: string;
@@ -63,6 +65,7 @@ interface ModelFormData {
 
 const initialFormData: ModelFormData = {
   displayName: '',
+  cliTypeId: '',
   apiType: 'anthropic',
   baseUrl: API_TYPES.anthropic.defaultBaseUrl,
   apiKey: '',
@@ -93,6 +96,7 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
     setEditingModel(null);
     setFormData({
       displayName: '',
+      cliTypeId: '',
       apiType: 'anthropic',
       baseUrl: API_TYPES.anthropic.defaultBaseUrl,
       apiKey: '',
@@ -107,6 +111,7 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
     setEditingModel(model);
     setFormData({
       displayName: model.displayName,
+      cliTypeId: model.cliTypeId ?? '',
       apiType: model.apiType,
       baseUrl: model.baseUrl,
       apiKey: model.apiKey,
@@ -186,6 +191,7 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
       const tempModel: ModelConfig = {
         id: editingModel?.id ?? `temp-${Date.now()}`,
         displayName: formData.displayName || 'Temp',
+        cliTypeId: formData.cliTypeId,
         apiType: formData.apiType,
         baseUrl: formData.baseUrl,
         apiKey: formData.apiKey,
@@ -220,6 +226,9 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
     if (!formData.displayName.trim()) {
       errors.displayName = t('step3.errors.displayNameRequired');
     }
+    if (!formData.cliTypeId.trim()) {
+      errors.cliTypeId = t('validation.terminals.cliRequired');
+    }
     if (!formData.baseUrl.trim()) {
       errors.baseUrl = t('step3.errors.baseUrlRequired');
     }
@@ -242,6 +251,7 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
     const newModel: ModelConfig = {
       id: editingModel?.id ?? `model-${Date.now()}`,
       displayName: formData.displayName,
+      cliTypeId: formData.cliTypeId,
       apiType: formData.apiType,
       baseUrl: formData.baseUrl,
       apiKey: formData.apiKey,
@@ -309,6 +319,9 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
                   <div className="text-base font-medium text-high">{model.displayName}</div>
                   <div className="text-sm text-low mt-quarter">
                     {API_TYPES[model.apiType].label} - {model.modelId}
+                    {model.cliTypeId
+                      ? ` · ${(CLI_TYPES as Record<string, { label: string }>)[model.cliTypeId]?.label ?? model.cliTypeId}`
+                      : ''}
                   </div>
                 </div>
               </div>
@@ -376,6 +389,30 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
                 )}
               />
               {formErrors.displayName && <FieldError>{formErrors.displayName}</FieldError>}
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="cliTypeId">{t('step4.cliTypeLabel')}</FieldLabel>
+              <select
+                id="cliTypeId"
+                value={formData.cliTypeId}
+                onChange={(e) => {
+                  setFormData({ ...formData, cliTypeId: e.target.value });
+                }}
+                className={cn(
+                  'w-full bg-secondary rounded-sm border px-base py-half text-base text-high',
+                  'focus:outline-none focus:ring-1 focus:ring-brand',
+                  formErrors.cliTypeId && 'border-error'
+                )}
+              >
+                <option value="">{t('step6.errorTerminal.cliPlaceholder')}</option>
+                {Object.values(CLI_TYPES).map((cli) => (
+                  <option key={cli.id} value={cli.id}>
+                    {cli.label}
+                  </option>
+                ))}
+              </select>
+              {formErrors.cliTypeId && <FieldError>{formErrors.cliTypeId}</FieldError>}
             </Field>
 
             {/* API Type */}

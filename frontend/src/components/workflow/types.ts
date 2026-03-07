@@ -1,17 +1,16 @@
 // ============================================================================
-// 工作流向导类型定义
-// 对应设计文档 2026-01-16-orchestrator-design.md 第 11 章
+// Workflow Wizard Types
 // ============================================================================
 
-/** 向导步骤枚举 */
+/** Wizard step order */
 export enum WizardStep {
-  Project = 0,      // 步骤0: 工作目录
-  Basic = 1,        // 步骤1: 基础配置
-  Tasks = 2,        // 步骤2: 任务配置
-  Models = 3,       // 步骤3: 模型配置
-  Terminals = 4,    // 步骤4: 终端配置
-  Commands = 5,     // 步骤5: 斜杠命令
-  Advanced = 6,     // 步骤6: 高级配置
+  Project = 0,
+  Basic = 1,
+  Tasks = 2,
+  Models = 3,
+  Terminals = 4,
+  Commands = 5,
+  Advanced = 6,
 }
 
 export type WorkflowExecutionMode = 'diy' | 'agent_planned';
@@ -22,7 +21,7 @@ export interface WizardStepMeta {
   descriptionKey: string;
 }
 
-/** 向导步骤元数据 */
+/** Step metadata for the wizard indicator */
 export const WIZARD_STEPS: readonly WizardStepMeta[] = [
   {
     step: WizardStep.Project,
@@ -90,7 +89,7 @@ export function getVisibleWizardStepIds(
   return getVisibleWizardSteps(executionMode).map((stepMeta) => stepMeta.step);
 }
 
-/** Git 仓库状态 */
+/** Git repository status */
 export interface GitStatus {
   isGitRepo: boolean;
   currentBranch?: string;
@@ -99,13 +98,13 @@ export interface GitStatus {
   uncommittedChanges?: number;
 }
 
-/** 项目配置 (步骤0) */
+/** Project config (Step 0) */
 export interface ProjectConfig {
   workingDirectory: string;
   gitStatus: GitStatus;
 }
 
-/** 基础配置 (步骤1) */
+/** Basic config (Step 1) */
 export interface BasicConfig {
   name: string;
   description?: string;
@@ -116,53 +115,54 @@ export interface BasicConfig {
   kanbanTaskIds?: string[];
 }
 
-/** 任务配置 (步骤2) */
+/** Task config (Step 2) */
 export interface TaskConfig {
-  id: string;           // 临时 ID，用于前端标识
+  id: string;
   name: string;
-  description: string;  // AI 将根据此描述执行任务
-  branch: string;       // Git 分支名
-  terminalCount: number; // 此任务的串行终端数量
+  description: string;
+  branch: string;
+  terminalCount: number;
 }
 
-/** API 类型 */
+/** API provider type */
 export type ApiType = 'anthropic' | 'google' | 'openai' | 'openai-compatible';
 
-/** 模型配置 (步骤3) */
+/** Model config (Step 3) */
 export interface ModelConfig {
-  id: string;           // 临时 ID
-  displayName: string;  // 用户自定义显示名
+  id: string;
+  displayName: string;
+  cliTypeId?: string; // Legacy models may not have this field yet.
   apiType: ApiType;
   baseUrl: string;
   apiKey: string;
-  modelId: string;      // 实际模型 ID
-  isVerified: boolean;  // 是否已验证连接
+  modelId: string;
+  isVerified: boolean;
 }
 
-/** 终端配置 (步骤4) */
+/** Terminal config (Step 4) */
 export interface TerminalConfig {
-  id: string;           // 临时 ID
-  taskId: string;       // 关联的任务 ID
-  orderIndex: number;   // 在任务内的执行顺序
-  cliTypeId: string;    // CLI 类型 (claude-code, gemini-cli, codex)
-  modelConfigId: string; // 关联的模型配置 ID
-  role?: string;        // 角色描述
-  autoConfirm?: boolean; // 自动确认提示（默认 true）
+  id: string;
+  taskId: string;
+  orderIndex: number;
+  cliTypeId: string;
+  modelConfigId: string;
+  role?: string;
+  autoConfirm?: boolean;
 }
 
-/** 斜杠命令配置 (步骤5) */
+/** Slash command config (Step 5) */
 export interface CommandConfig {
   enabled: boolean;
-  presetIds: string[];  // 选中的命令预设 ID（按顺序）
-  customDescriptions?: Record<string, string>; // presetId -> 用户自定义描述
-  additionalCommands?: Record<string, string[]>; // presetId -> 额外的斜杠命令列表
-  customParams?: Record<string, Record<string, unknown>>; // presetId -> JSON object (高级)
+  presetIds: string[];
+  customDescriptions?: Record<string, string>;
+  additionalCommands?: Record<string, string[]>;
+  customParams?: Record<string, Record<string, unknown>>;
 }
 
-/** 高级配置 (步骤6) */
+/** Advanced config (Step 6) */
 export interface AdvancedConfig {
   orchestrator: {
-    modelConfigId: string; // 主 Agent 使用的模型
+    modelConfigId: string;
   };
   errorTerminal: {
     enabled: boolean;
@@ -179,7 +179,7 @@ export interface AdvancedConfig {
   gitWatcherEnabled: boolean;
 }
 
-/** 完整的向导配置 */
+/** Full wizard config */
 export interface WizardConfig {
   project: ProjectConfig;
   basic: BasicConfig;
@@ -190,7 +190,7 @@ export interface WizardConfig {
   advanced: AdvancedConfig;
 }
 
-/** 向导状态 */
+/** Wizard state */
 export interface WizardState {
   currentStep: WizardStep;
   config: WizardConfig;
@@ -198,7 +198,7 @@ export interface WizardState {
   errors: Record<string, string>;
 }
 
-/** 获取默认向导配置 */
+/** Default wizard config */
 export function getDefaultWizardConfig(): WizardConfig {
   return {
     project: {
@@ -241,7 +241,7 @@ export function getDefaultWizardConfig(): WizardConfig {
 import type { CreateWorkflowRequest, InlineModelConfig } from '@/hooks/useWorkflows';
 
 /**
- * Transform WizardConfig to CreateWorkflowRequest
+ * Transform WizardConfig to CreateWorkflowRequest.
  * Matches backend API contract at workflows_dto.rs
  */
 export function wizardConfigToCreateRequest(
@@ -251,15 +251,47 @@ export function wizardConfigToCreateRequest(
   const executionMode = config.basic.executionMode;
   const isAgentPlanned = isAgentPlannedMode(executionMode);
 
-  // Build orchestrator config from models
-  const orchestratorModel = config.models.find(m => m.id === config.advanced.orchestrator.modelConfigId);
+  const isModelCompatibleWithCli = (
+    model: ModelConfig,
+    cliTypeId: string
+  ): boolean => {
+    const boundCliTypeId = model.cliTypeId?.trim();
+    if (!boundCliTypeId) {
+      return true;
+    }
+    return boundCliTypeId === cliTypeId;
+  };
+
+  const resolveTerminalModel = (
+    modelConfigId: string,
+    cliTypeId: string,
+    context: string
+  ): ModelConfig => {
+    const model = config.models.find((candidate) => candidate.id === modelConfigId);
+    if (!model) {
+      throw new Error(`Model not found for ${context}`);
+    }
+    if (!isModelCompatibleWithCli(model, cliTypeId)) {
+      throw new Error(
+        `Model "${model.displayName}" is bound to "${model.cliTypeId}" and cannot be used by CLI "${cliTypeId}" in ${context}`
+      );
+    }
+    return model;
+  };
+
+  // Build orchestrator config from models.
+  const orchestratorModel = config.models.find(
+    (model) => model.id === config.advanced.orchestrator.modelConfigId
+  );
   if (!orchestratorModel) {
     throw new Error('Orchestrator model not found in configured models');
   }
 
-  // Helper to create inline model config from model ID
-  const toInlineModelConfig = (modelConfigId?: string): InlineModelConfig | undefined => {
-    const model = config.models.find(m => m.id === modelConfigId);
+  // Helper to create inline model config from model ID.
+  const toInlineModelConfig = (
+    modelConfigId?: string
+  ): InlineModelConfig | undefined => {
+    const model = config.models.find((candidate) => candidate.id === modelConfigId);
     return model
       ? { displayName: model.displayName, modelId: model.modelId }
       : undefined;
@@ -285,12 +317,11 @@ export function wizardConfigToCreateRequest(
           branch: task.branch,
           orderIndex: taskIndex,
           terminals: taskTerminals.map((terminal) => {
-            const model = config.models.find(
-              (candidate) => candidate.id === terminal.modelConfigId
+            const model = resolveTerminalModel(
+              terminal.modelConfigId,
+              terminal.cliTypeId,
+              `terminal ${terminal.id}`
             );
-            if (!model) {
-              throw new Error(`Model not found for terminal ${terminal.id}`);
-            }
 
             return {
               id: terminal.id,
@@ -310,6 +341,29 @@ export function wizardConfigToCreateRequest(
           }),
         };
       });
+
+  if (config.advanced.errorTerminal.enabled) {
+    const errorTerminalCliTypeId = config.advanced.errorTerminal.cliTypeId?.trim();
+    const errorTerminalModelConfigId =
+      config.advanced.errorTerminal.modelConfigId?.trim();
+
+    if (!errorTerminalCliTypeId || !errorTerminalModelConfigId) {
+      throw new Error('Error terminal config is incomplete');
+    }
+
+    resolveTerminalModel(
+      errorTerminalModelConfigId,
+      errorTerminalCliTypeId,
+      'error terminal'
+    );
+  }
+
+  const mergeCliTypeId = config.advanced.mergeTerminal.cliTypeId.trim();
+  const mergeModelConfigId = config.advanced.mergeTerminal.modelConfigId.trim();
+  if (!mergeCliTypeId || !mergeModelConfigId) {
+    throw new Error('Merge terminal config is incomplete');
+  }
+  resolveTerminalModel(mergeModelConfigId, mergeCliTypeId, 'merge terminal');
 
   const request: CreateWorkflowRequest = {
     projectId,

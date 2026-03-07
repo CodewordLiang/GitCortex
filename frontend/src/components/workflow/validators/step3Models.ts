@@ -8,7 +8,15 @@ export function validateStep3Models(config: WizardConfig): Record<string, string
 
   if (config.models.length === 0) {
     errors.models = 'validation.models.required';
+    return errors;
   }
+
+  config.models.forEach((model, index) => {
+    const modelKey = model.id.trim() || String(index);
+    if (!model.cliTypeId?.trim()) {
+      errors[`model-${modelKey}-cli`] = 'validation.terminals.cliRequired';
+    }
+  });
 
   return errors;
 }

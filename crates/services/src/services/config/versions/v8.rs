@@ -25,6 +25,8 @@ fn default_workflow_model_library() -> Vec<WorkflowModelLibraryItem> {
 pub struct WorkflowModelLibraryItem {
     pub id: String,
     pub display_name: String,
+    #[serde(default)]
+    pub cli_type_id: Option<String>,
     pub api_type: String,
     pub base_url: String,
     pub api_key: String,
@@ -178,6 +180,7 @@ mod tests {
         let item = WorkflowModelLibraryItem {
             id: "id-1".to_string(),
             display_name: "OpenAI".to_string(),
+            cli_type_id: Some("cli-codex".to_string()),
             api_type: "openai".to_string(),
             base_url: "https://api.openai.com/v1".to_string(),
             api_key: "sk-test".to_string(),
@@ -187,6 +190,7 @@ mod tests {
 
         let value = serde_json::to_value(item).expect("item should serialize");
         assert_eq!(value["displayName"], "OpenAI");
+        assert_eq!(value["cliTypeId"], "cli-codex");
         assert_eq!(value["apiType"], "openai");
         assert_eq!(value["baseUrl"], "https://api.openai.com/v1");
         assert_eq!(value["apiKey"], "sk-test");

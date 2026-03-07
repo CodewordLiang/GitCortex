@@ -102,12 +102,12 @@ describe('Workflow Types', () => {
 
       const request = wizardConfigToCreateRequest('proj-1', config);
 
-      expect(request).toEqual({
+      expect(request).toMatchObject({
         projectId: 'proj-1',
         name: 'Test Workflow',
         description: 'Test description',
+        executionMode: 'diy',
         useSlashCommands: false,
-        commandPresetIds: undefined,
         commands: [],
         orchestratorConfig: {
           apiType: 'anthropic',
@@ -121,29 +121,36 @@ describe('Workflow Types', () => {
           modelConfigId: 'model-1',
           customBaseUrl: null,
           customApiKey: null,
+          modelConfig: {
+            displayName: 'Claude 3.5',
+            modelId: 'claude-3-5-sonnet-20241022',
+          },
         },
         targetBranch: 'main',
-        tasks: [
-          {
-            id: 'task-0',
-            name: 'Task 1',
-            description: 'First task',
-            branch: 'feat/task-1',
-            orderIndex: 0,
-            terminals: [
-              {
-                id: 'term-1',
-                cliTypeId: 'claude-code',
-                modelConfigId: 'model-1',
-                customBaseUrl: null,
-                customApiKey: null,
-                role: undefined,
-                roleDescription: null,
-                orderIndex: 0,
-              },
-            ],
-          },
-        ],
+        gitWatcherEnabled: true,
+      });
+
+      expect(request.tasks).toHaveLength(1);
+      expect(request.tasks[0]).toMatchObject({
+        id: 'task-0',
+        name: 'Task 1',
+        description: 'First task',
+        branch: 'feat/task-1',
+        orderIndex: 0,
+      });
+      expect(request.tasks[0].terminals).toHaveLength(1);
+      expect(request.tasks[0].terminals[0]).toMatchObject({
+        id: 'term-1',
+        cliTypeId: 'claude-code',
+        modelConfigId: 'model-1',
+        customBaseUrl: 'https://api.anthropic.com',
+        customApiKey: 'sk-ant-xxx',
+        modelConfig: {
+          displayName: 'Claude 3.5',
+          modelId: 'claude-3-5-sonnet-20241022',
+        },
+        autoConfirm: true,
+        orderIndex: 0,
       });
     });
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Field, FieldLabel, FieldError } from '../../ui-new/primitives/Field';
 import { CollapsibleSection } from '../../ui-new/primitives/CollapsibleSection';
 import { cn } from '@/lib/utils';
@@ -22,6 +22,32 @@ export const Step6Advanced: React.FC<Step6AdvancedProps> = ({
 }) => {
   const { t } = useTranslation('workflow');
   const advancedConfig = config.advanced;
+
+  const getModelsForCli = (cliTypeId?: string) => {
+    if (!cliTypeId) {
+      return [];
+    }
+    return config.models.filter((model) => {
+      const boundCliTypeId = model.cliTypeId?.trim();
+      if (!boundCliTypeId) {
+        return true;
+      }
+      return boundCliTypeId === cliTypeId;
+    });
+  };
+
+  const isModelCompatibleWithCli = (
+    modelConfigId: string | undefined,
+    cliTypeId: string | undefined
+  ): boolean => {
+    if (!modelConfigId?.trim()) {
+      return true;
+    }
+    if (!cliTypeId?.trim()) {
+      return false;
+    }
+    return getModelsForCli(cliTypeId).some((model) => model.id === modelConfigId);
+  };
 
   const updateOrchestrator = (updates: Partial<AdvancedConfig['orchestrator']>) => {
     onUpdate({
@@ -72,7 +98,13 @@ export const Step6Advanced: React.FC<Step6AdvancedProps> = ({
   };
 
   const handleErrorTerminalCliChange = (cliTypeId: string) => {
-    updateErrorTerminal({ cliTypeId });
+    const nextModelConfigId = isModelCompatibleWithCli(
+      advancedConfig.errorTerminal.modelConfigId,
+      cliTypeId
+    )
+      ? advancedConfig.errorTerminal.modelConfigId
+      : undefined;
+    updateErrorTerminal({ cliTypeId, modelConfigId: nextModelConfigId });
   };
 
   const handleErrorTerminalModelChange = (modelConfigId: string) => {
@@ -80,7 +112,13 @@ export const Step6Advanced: React.FC<Step6AdvancedProps> = ({
   };
 
   const handleMergeTerminalCliChange = (cliTypeId: string) => {
-    updateMergeTerminal({ cliTypeId });
+    const nextModelConfigId = isModelCompatibleWithCli(
+      advancedConfig.mergeTerminal.modelConfigId,
+      cliTypeId
+    )
+      ? advancedConfig.mergeTerminal.modelConfigId
+      : '';
+    updateMergeTerminal({ cliTypeId, modelConfigId: nextModelConfigId });
   };
 
   const handleMergeTerminalModelChange = (modelConfigId: string) => {
@@ -112,6 +150,42 @@ export const Step6Advanced: React.FC<Step6AdvancedProps> = ({
       },
     });
   };
+
+  useEffect(() => {
+    const errorTerminalModelIncompatible =
+      advancedConfig.errorTerminal.enabled &&
+      !isModelCompatibleWithCli(
+        advancedConfig.errorTerminal.modelConfigId,
+        advancedConfig.errorTerminal.cliTypeId
+      );
+
+    const mergeTerminalModelIncompatible = !isModelCompatibleWithCli(
+      advancedConfig.mergeTerminal.modelConfigId,
+      advancedConfig.mergeTerminal.cliTypeId
+    );
+
+    if (!errorTerminalModelIncompatible && !mergeTerminalModelIncompatible) {
+      return;
+    }
+
+    onUpdate({
+      advanced: {
+        ...advancedConfig,
+        errorTerminal: {
+          ...advancedConfig.errorTerminal,
+          modelConfigId: errorTerminalModelIncompatible
+            ? undefined
+            : advancedConfig.errorTerminal.modelConfigId,
+        },
+        mergeTerminal: {
+          ...advancedConfig.mergeTerminal,
+          modelConfigId: mergeTerminalModelIncompatible
+            ? ''
+            : advancedConfig.mergeTerminal.modelConfigId,
+        },
+      },
+    });
+  }, [advancedConfig, config.models, onUpdate]);
 
   return (
     <div className="flex flex-col gap-base">
@@ -199,14 +273,16 @@ export const Step6Advanced: React.FC<Step6AdvancedProps> = ({
                 onChange={(e) => {
                   handleErrorTerminalModelChange(e.target.value);
                 }}
+                disabled={!advancedConfig.errorTerminal.cliTypeId}
                 className={cn(
                   'w-full bg-secondary rounded-sm border px-base py-half text-base text-high',
                   'focus:outline-none focus:ring-1 focus:ring-brand',
+                  'disabled:opacity-50 disabled:cursor-not-allowed',
                   errors.errorTerminalModel && 'border-error'
                 )}
               >
                 <option value="">{t('step6.errorTerminal.modelPlaceholder')}</option>
-                {config.models.map((model) => (
+                {getModelsForCli(advancedConfig.errorTerminal.cliTypeId).map((model) => (
                   <option key={model.id} value={model.id}>
                     {model.displayName}
                   </option>
@@ -257,14 +333,16 @@ export const Step6Advanced: React.FC<Step6AdvancedProps> = ({
               onChange={(e) => {
                 handleMergeTerminalModelChange(e.target.value);
               }}
+              disabled={!advancedConfig.mergeTerminal.cliTypeId}
               className={cn(
                 'w-full bg-secondary rounded-sm border px-base py-half text-base text-high',
                 'focus:outline-none focus:ring-1 focus:ring-brand',
+                'disabled:opacity-50 disabled:cursor-not-allowed',
                 errors.mergeModel && 'border-error'
               )}
             >
               <option value="">{t('step6.mergeTerminal.modelPlaceholder')}</option>
-              {config.models.map((model) => (
+              {getModelsForCli(advancedConfig.mergeTerminal.cliTypeId).map((model) => (
                 <option key={model.id} value={model.id}>
                   {model.displayName}
                 </option>

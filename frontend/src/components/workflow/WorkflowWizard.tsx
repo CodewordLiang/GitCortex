@@ -77,9 +77,11 @@ export function WorkflowWizard({
           return false;
         }
         const candidate = item as Record<string, unknown>;
+        const cliTypeId = candidate.cliTypeId;
         return (
           typeof candidate.id === 'string' &&
           typeof candidate.displayName === 'string' &&
+          (cliTypeId === undefined || typeof cliTypeId === 'string') &&
           typeof candidate.apiType === 'string' &&
           typeof candidate.baseUrl === 'string' &&
           typeof candidate.apiKey === 'string' &&

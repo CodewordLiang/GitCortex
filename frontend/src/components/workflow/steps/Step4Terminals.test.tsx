@@ -109,7 +109,7 @@ describe('Step4Terminals', () => {
 
     expect(terminalsUpdate).toBeDefined();
     const [update] = terminalsUpdate ?? [];
-    expect(update?.terminals).toHaveLength(2);
+    expect(update?.terminals).toHaveLength(3);
   });
 
   it('should display terminal count for current task', () => {
@@ -240,6 +240,54 @@ describe('Step4Terminals', () => {
     // Claude Code should appear in the list
     const cliButtons = screen.getAllByText('Claude Code');
     expect(cliButtons.length).toBeGreaterThan(0);
+  });
+
+  it('normalizes legacy CLI detect responses to canonical CLI ids', async () => {
+    const configWithBoundModel: WizardConfig = {
+      ...baseConfig,
+      models: [
+        {
+          ...baseConfig.models[0],
+          cliTypeId: 'cli-claude-code',
+        },
+      ],
+      terminals: [
+        {
+          id: 'terminal-task-1-0',
+          taskId: 'task-1',
+          orderIndex: 0,
+          cliTypeId: '',
+          modelConfigId: '',
+          role: '',
+        },
+      ],
+    };
+
+    mockFetch.mockResolvedValueOnce(
+      createFetchResponse({
+        'claude-code': true,
+      })
+    );
+
+    renderWithI18n(
+      <Step4Terminals
+        config={configWithBoundModel}
+        errors={{}}
+        onUpdate={mockOnUpdate}
+      />
+    );
+
+    const claudeButton = await screen.findByRole('button', { name: 'Claude Code' });
+
+    mockOnUpdate.mockClear();
+    fireEvent.click(claudeButton);
+
+    await waitFor(() => {
+      expect(mockOnUpdate).toHaveBeenCalled();
+    });
+
+    const [update] = mockOnUpdate.mock.calls.at(-1) ?? [];
+    expect(update?.terminals?.[0]?.cliTypeId).toBe('cli-claude-code');
   });
 
   it('should allow model selection for terminals', async () => {

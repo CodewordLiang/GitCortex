@@ -17,10 +17,25 @@ export function validateStep4Terminals(config: WizardConfig): Record<string, str
 
   config.terminals.forEach((terminal, index) => {
     const terminalKey = terminal.id.trim() || String(index);
-    if (!terminal.cliTypeId.trim()) {
+    const cliTypeId = terminal.cliTypeId.trim();
+    const modelConfigId = terminal.modelConfigId.trim();
+
+    if (!cliTypeId) {
       errors[`terminal-${terminalKey}-cli`] = 'validation.terminals.cliRequired';
     }
-    if (!terminal.modelConfigId.trim()) {
+    if (!modelConfigId) {
+      errors[`terminal-${terminalKey}-model`] = 'validation.terminals.modelRequired';
+      return;
+    }
+
+    const model = config.models.find((candidate) => candidate.id === modelConfigId);
+    if (!model) {
+      errors[`terminal-${terminalKey}-model`] = 'validation.terminals.modelRequired';
+      return;
+    }
+
+    const boundCliTypeId = model.cliTypeId?.trim();
+    if (boundCliTypeId && cliTypeId && boundCliTypeId !== cliTypeId) {
       errors[`terminal-${terminalKey}-model`] = 'validation.terminals.modelRequired';
     }
   });

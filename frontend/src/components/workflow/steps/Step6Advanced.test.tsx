@@ -222,7 +222,7 @@ describe('Step6Advanced', () => {
           ...defaultConfig.advanced,
           errorTerminal: {
             enabled: true,
-            cliTypeId: 'claude-code',
+            cliTypeId: 'cli-claude-code',
             modelConfigId: 'model-1',
           },
         },
@@ -252,7 +252,7 @@ describe('Step6Advanced', () => {
         ...configWithModels,
         advanced: {
           ...configWithModels.advanced,
-          errorTerminal: { enabled: true },
+          errorTerminal: { enabled: true, cliTypeId: 'cli-claude-code' },
         },
       };
 
@@ -265,10 +265,10 @@ describe('Step6Advanced', () => {
       );
 
       const select = screen.getByLabelText(i18n.t('workflow:step6.errorTerminal.cliLabel'));
-      fireEvent.change(select, { target: { value: 'claude-code' } });
+      fireEvent.change(select, { target: { value: 'cli-claude-code' } });
 
       const advanced = getLastAdvanced();
-      expect(advanced.errorTerminal.cliTypeId).toBe('claude-code');
+      expect(advanced.errorTerminal.cliTypeId).toBe('cli-claude-code');
     });
 
     it('should update error terminal model selection', () => {
@@ -276,7 +276,7 @@ describe('Step6Advanced', () => {
         ...configWithModels,
         advanced: {
           ...configWithModels.advanced,
-          errorTerminal: { enabled: true },
+          errorTerminal: { enabled: true, cliTypeId: 'cli-claude-code' },
         },
       };
 
@@ -349,16 +349,25 @@ describe('Step6Advanced', () => {
       );
 
       const select = screen.getByLabelText(i18n.t('workflow:step6.mergeTerminal.cliLabel'));
-      fireEvent.change(select, { target: { value: 'gemini-cli' } });
+      fireEvent.change(select, { target: { value: 'cli-gemini-cli' } });
 
       const advanced = getLastAdvanced();
-      expect(advanced.mergeTerminal.cliTypeId).toBe('gemini-cli');
+      expect(advanced.mergeTerminal.cliTypeId).toBe('cli-gemini-cli');
     });
 
     it('should update merge terminal model selection', () => {
       renderWithI18n(
         <Step6Advanced
-          config={configWithModels}
+          config={{
+            ...configWithModels,
+            advanced: {
+              ...configWithModels.advanced,
+              mergeTerminal: {
+                ...configWithModels.advanced.mergeTerminal,
+                cliTypeId: 'cli-claude-code',
+              },
+            },
+          }}
           onUpdate={mockOnUpdate}
           errors={{}}
         />
@@ -588,7 +597,7 @@ describe('Step6Advanced', () => {
       );
 
       const select = screen.getByLabelText(i18n.t('workflow:step6.errorTerminal.cliLabel'));
-      fireEvent.change(select, { target: { value: 'claude-code' } });
+      fireEvent.change(select, { target: { value: 'cli-claude-code' } });
 
       const calls = mockOnUpdate.mock.calls;
       expect(calls.length).toBeGreaterThan(0);
@@ -596,7 +605,7 @@ describe('Step6Advanced', () => {
       const lastCall = calls[calls.length - 1][0];
       expect(lastCall).toHaveProperty('advanced');
       expect(lastCall.advanced).toHaveProperty('errorTerminal');
-      expect(lastCall.advanced.errorTerminal).toHaveProperty('cliTypeId', 'claude-code');
+      expect(lastCall.advanced.errorTerminal).toHaveProperty('cliTypeId', 'cli-claude-code');
     });
 
     it('should use updateMergeTerminal helper function', () => {
@@ -609,7 +618,7 @@ describe('Step6Advanced', () => {
       );
 
       const select = screen.getByLabelText(i18n.t('workflow:step6.mergeTerminal.cliLabel'));
-      fireEvent.change(select, { target: { value: 'codex' } });
+      fireEvent.change(select, { target: { value: 'cli-codex' } });
 
       const calls = mockOnUpdate.mock.calls;
       expect(calls.length).toBeGreaterThan(0);
@@ -617,7 +626,7 @@ describe('Step6Advanced', () => {
       const lastCall = calls[calls.length - 1][0];
       expect(lastCall).toHaveProperty('advanced');
       expect(lastCall.advanced).toHaveProperty('mergeTerminal');
-      expect(lastCall.advanced.mergeTerminal).toHaveProperty('cliTypeId', 'codex');
+      expect(lastCall.advanced.mergeTerminal).toHaveProperty('cliTypeId', 'cli-codex');
     });
   });
 

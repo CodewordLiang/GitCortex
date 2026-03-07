@@ -20,7 +20,7 @@ describe('validateStep4Terminals', () => {
 
     const errors = validateStep4Terminals(config);
 
-    expect(errors['terminal-0-cli']).toBeTruthy();
-    expect(errors['terminal-0-model']).toBeTruthy();
+    expect(errors['terminal-t1-cli']).toBeTruthy();
+    expect(errors['terminal-t1-model']).toBeTruthy();
   });
 });

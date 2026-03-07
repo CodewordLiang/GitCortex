@@ -25,9 +25,11 @@ const isWorkflowModelConfig = (
   }
 
   const item = value as Record<string, unknown>;
+  const cliTypeId = item.cliTypeId;
   return (
     typeof item.id === 'string' &&
     typeof item.displayName === 'string' &&
+    (cliTypeId === undefined || typeof cliTypeId === 'string') &&
     typeof item.apiType === 'string' &&
     typeof item.baseUrl === 'string' &&
     typeof item.apiKey === 'string' &&

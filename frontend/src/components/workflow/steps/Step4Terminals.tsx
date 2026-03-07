@@ -47,6 +47,37 @@ const isCliDetectResponseArray = (value: unknown): value is CliDetectResponse[] 
   );
 };
 
+const isLegacyCliDetectMap = (value: unknown): value is Record<string, boolean> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return Object.values(value).every((item) => typeof item === 'boolean');
+};
+
+const LEGACY_CLI_DISPLAY_NAMES: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  'gemini-cli': 'Gemini CLI',
+  codex: 'Codex',
+  'cursor-agent': 'Cursor Agent',
+  amp: 'Amp',
+  'qwen-code': 'Qwen Code',
+  copilot: 'Copilot',
+  droid: 'Droid',
+  opencode: 'Opencode',
+};
+
+const LEGACY_CLI_ID_ALIASES: Record<string, string> = {
+  'claude-code': 'cli-claude-code',
+  'gemini-cli': 'cli-gemini-cli',
+  codex: 'cli-codex',
+  'cursor-agent': 'cli-cursor-agent',
+  amp: 'cli-amp',
+  'qwen-code': 'cli-qwen-code',
+  copilot: 'cli-copilot',
+  droid: 'cli-droid',
+  opencode: 'cli-opencode',
+};
+
 const parseJson = async (response: Response): Promise<unknown> => {
   try {
     return (await response.json()) as unknown;
@@ -185,16 +216,29 @@ export const Step4Terminals: React.FC<Step4TerminalsProps> = ({
     try {
       const response = await fetch('/api/cli_types/detect');
       const data = await parseJson(response);
-      if (response.ok && isCliDetectResponseArray(data)) {
-        // Convert API response to CliType array
-        const cliList: CliType[] = data.map((item) => ({
-          id: item.cliTypeId,
-          name: item.name,
-          displayName: item.displayName,
-          installed: item.installed,
-          installGuideUrl: item.installGuideUrl,
-        }));
-        setCliTypes(cliList);
+      if (response.ok) {
+        if (isCliDetectResponseArray(data)) {
+          // Convert API response to CliType array
+          const cliList: CliType[] = data.map((item) => ({
+            id: item.cliTypeId,
+            name: item.name,
+            displayName: item.displayName,
+            installed: item.installed,
+            installGuideUrl: item.installGuideUrl,
+          }));
+          setCliTypes(cliList);
+        } else if (isLegacyCliDetectMap(data)) {
+          const cliList: CliType[] = Object.entries(data).map(([name, installed]) => ({
+            id: LEGACY_CLI_ID_ALIASES[name] ?? name,
+            name,
+            displayName: LEGACY_CLI_DISPLAY_NAMES[name] ?? name,
+            installed,
+            installGuideUrl: installed
+              ? null
+              : `https://example.com/install/${encodeURIComponent(name)}`,
+          }));
+          setCliTypes(cliList);
+        }
       }
     } catch (error) {
       notifyError(error, 'detectCliTypes');
@@ -218,6 +262,46 @@ export const Step4Terminals: React.FC<Step4TerminalsProps> = ({
     );
     onUpdate({ terminals: newTerminals });
   };
+
+  const getModelsForCli = useCallback(
+    (cliTypeId: string) =>
+      config.models.filter((model) => {
+        const boundCliTypeId = model.cliTypeId?.trim();
+        if (!boundCliTypeId) {
+          return true;
+        }
+        return boundCliTypeId === cliTypeId;
+      }),
+    [config.models]
+  );
+
+  // Keep terminal model selection compatible with CLI binding.
+  useEffect(() => {
+    const normalizedTerminals = config.terminals.map((terminal) => {
+      if (!terminal.modelConfigId.trim()) {
+        return terminal;
+      }
+
+      const compatibleModelIds = new Set(
+        terminal.cliTypeId
+          ? getModelsForCli(terminal.cliTypeId).map((model) => model.id)
+          : config.models.map((model) => model.id)
+      );
+
+      if (compatibleModelIds.has(terminal.modelConfigId)) {
+        return terminal;
+      }
+
+      return {
+        ...terminal,
+        modelConfigId: '',
+      };
+    });
+
+    if (!terminalConfigListEquals(config.terminals, normalizedTerminals)) {
+      onUpdate({ terminals: normalizedTerminals });
+    }
+  }, [config.models, config.terminals, getModelsForCli, onUpdate]);
 
   const goToPreviousTask = () => {
     if (currentTaskIndex > 0) {
@@ -396,7 +480,18 @@ export const Step4Terminals: React.FC<Step4TerminalsProps> = ({
                       key={cli.id}
                       type="button"
                       onClick={() => {
-                        updateTerminal(terminal.id, { cliTypeId: cli.id });
+                        const compatibleModelIds = new Set(
+                          getModelsForCli(cli.id).map((model) => model.id)
+                        );
+                        const nextModelConfigId = compatibleModelIds.has(
+                          terminal.modelConfigId
+                        )
+                          ? terminal.modelConfigId
+                          : '';
+                        updateTerminal(terminal.id, {
+                          cliTypeId: cli.id,
+                          modelConfigId: nextModelConfigId,
+                        });
                       }}
                       disabled={!cli.installed}
                       className={cn(
@@ -425,24 +520,33 @@ export const Step4Terminals: React.FC<Step4TerminalsProps> = ({
               {/* Model Selection */}
               <Field>
                 <FieldLabel>{t('step4.modelLabel')}</FieldLabel>
+                {(() => {
+                  const compatibleModels = terminal.cliTypeId
+                    ? getModelsForCli(terminal.cliTypeId)
+                    : [];
+                  return (
                 <select
                   value={terminal.modelConfigId}
                   onChange={(e) => {
                     updateTerminal(terminal.id, { modelConfigId: e.target.value });
                   }}
+                  disabled={!terminal.cliTypeId}
                   className={cn(
                     'w-full bg-secondary rounded-sm border px-base py-half text-base text-high',
                     'focus:outline-none focus:ring-1 focus:ring-brand',
+                    'disabled:opacity-50 disabled:cursor-not-allowed',
                     errors[buildTerminalErrorKey(terminal.id, 'model')] && 'border-error'
                   )}
                 >
                   <option value="">{t('step4.modelPlaceholder')}</option>
-                  {config.models.map((model) => (
+                  {compatibleModels.map((model) => (
                     <option key={model.id} value={model.id}>
                       {model.displayName}
                     </option>
                   ))}
                 </select>
+                  );
+                })()}
                 {errors[buildTerminalErrorKey(terminal.id, 'model')] && (
                   <FieldError>{t(errors[buildTerminalErrorKey(terminal.id, 'model')])}</FieldError>
                 )}
