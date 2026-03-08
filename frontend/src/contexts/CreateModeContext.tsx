@@ -99,3 +99,7 @@ export function useCreateMode() {
   }
   return context;
 }
+
+export function useCreateModeOptional() {
+  return useContext(CreateModeContext);
+}

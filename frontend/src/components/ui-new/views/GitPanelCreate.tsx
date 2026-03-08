@@ -6,7 +6,7 @@ import { ProjectSelectorContainer } from '@/components/ui-new/containers/Project
 import { RecentReposListContainer } from '@/components/ui-new/containers/RecentReposListContainer';
 import { BrowseRepoButtonContainer } from '@/components/ui-new/containers/BrowseRepoButtonContainer';
 import { CreateRepoButtonContainer } from '@/components/ui-new/containers/CreateRepoButtonContainer';
-import { WarningIcon } from '@phosphor-icons/react';
+import { WarningIcon, LinkSimple } from '@phosphor-icons/react';
 import { PERSIST_KEYS } from '@/stores/useUiPreferencesStore';
 import type { Project, GitBranch, Repo } from 'shared/types';
 
@@ -24,6 +24,9 @@ interface GitPanelCreateProps {
   onBranchChange: (repoId: string, branch: string) => void;
   registeredRepoPaths: string[];
   onRepoRegistered: (repo: Repo) => void;
+  boundRepoPath: string | null;
+  isBinding: boolean;
+  onBindRepo: () => void;
 }
 
 export function GitPanelCreate({
@@ -40,9 +43,15 @@ export function GitPanelCreate({
   onBranchChange,
   registeredRepoPaths,
   onRepoRegistered,
+  boundRepoPath,
+  isBinding,
+  onBindRepo,
 }: Readonly<GitPanelCreateProps>) {
   const { t } = useTranslation(['tasks', 'common']);
   const hasNoRepos = repos.length === 0;
+  const firstRepoPath = repos[0]?.path ?? null;
+  const isBound = boundRepoPath !== null && boundRepoPath === firstRepoPath;
+  const canBind = repos.length > 0 && selectedProjectId !== null;
 
   return (
     <div
@@ -78,13 +87,45 @@ export function GitPanelCreate({
             </p>
           </div>
         ) : (
-          <SelectedReposList
-            repos={repos}
-            onRemove={onRepoRemove}
-            branchesByRepo={branchesByRepo}
-            selectedBranches={targetBranches}
-            onBranchChange={onBranchChange}
-          />
+          <div className="flex flex-col gap-half">
+            <SelectedReposList
+              repos={repos}
+              onRemove={onRepoRemove}
+              branchesByRepo={branchesByRepo}
+              selectedBranches={targetBranches}
+              onBranchChange={onBranchChange}
+            />
+            {isBound && (
+              <div className="flex items-center gap-1.5 text-xs text-success px-1">
+                <LinkSimple className="h-3 w-3 shrink-0" />
+                <span>
+                  {t('common:workspace.repoBoundTo', {
+                    project: selectedProjectName ?? '',
+                  })}
+                </span>
+              </div>
+            )}
+            {canBind && (
+              <button
+                type="button"
+                onClick={onBindRepo}
+                disabled={isBinding}
+                className={cn(
+                  'flex items-center justify-center gap-1.5 w-full px-base py-half',
+                  'text-xs rounded border bg-brand/10 border-brand/30 text-brand',
+                  'hover:bg-brand/20 transition-colors',
+                  'disabled:opacity-50 disabled:cursor-not-allowed'
+                )}
+              >
+                <LinkSimple className="h-3 w-3 shrink-0" />
+                {isBinding
+                  ? t('common:states.saving')
+                  : t('common:workspace.bindRepoTo', {
+                      project: selectedProjectName ?? '',
+                    })}
+              </button>
+            )}
+          </div>
         )}
       </CollapsibleSectionHeader>
       <CollapsibleSectionHeader

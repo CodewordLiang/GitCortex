@@ -139,24 +139,24 @@ export function WorkspacesLayout() {
   };
 
   return (
-    <div className="flex flex-col h-screen">
-      <NavbarContainer />
-      <div className="flex flex-1 min-h-0">
-        {isLeftSidebarVisible && (
-          <div className="w-[300px] shrink-0 h-full overflow-hidden">
-            <WorkspacesSidebarContainer />
-          </div>
-        )}
+    <ModeProvider
+      isCreateMode={isCreateMode}
+      executionProps={{
+        key: `${selectedWorkspace?.id}-${selectedSessionId}`,
+        attemptId: selectedWorkspace?.id,
+        sessionId: selectedSessionId,
+      }}
+    >
+      <div className="flex flex-col h-screen">
+        <NavbarContainer />
+        <div className="flex flex-1 min-h-0">
+          {isLeftSidebarVisible && (
+            <div className="w-[300px] shrink-0 h-full overflow-hidden">
+              <WorkspacesSidebarContainer />
+            </div>
+          )}
 
-        <div className="flex-1 min-w-0 h-full">
-          <ModeProvider
-            isCreateMode={isCreateMode}
-            executionProps={{
-              key: `${selectedWorkspace?.id}-${selectedSessionId}`,
-              attemptId: selectedWorkspace?.id,
-              sessionId: selectedSessionId,
-            }}
-          >
+          <div className="flex-1 min-w-0 h-full">
             <ReviewProvider attemptId={selectedWorkspace?.id}>
               <LogsPanelProvider>
                 <ChangesViewProvider>
@@ -237,9 +237,9 @@ export function WorkspacesLayout() {
                 </ChangesViewProvider>
               </LogsPanelProvider>
             </ReviewProvider>
-          </ModeProvider>
+          </div>
         </div>
       </div>
-    </div>
+    </ModeProvider>
   );
 }

@@ -1,9 +1,11 @@
-import { useMemo, useEffect, useCallback } from 'react';
+import { useMemo, useEffect, useCallback, useState, useRef } from 'react';
 import { GitPanelCreate } from '@/components/ui-new/views/GitPanelCreate';
 import { useMultiRepoBranches } from '@/hooks/useRepoBranches';
 import { useProjects } from '@/hooks/useProjects';
+import { useProjectMutations } from '@/hooks/useProjectMutations';
 import { useCreateMode } from '@/contexts/CreateModeContext';
 import { CreateProjectDialog } from '@/components/ui-new/dialogs/CreateProjectDialog';
+import { repoApi } from '@/lib/api';
 
 interface GitPanelCreateContainerProps {
   readonly className?: string;
@@ -23,6 +25,9 @@ export function GitPanelCreateContainer({
     setSelectedProjectId,
   } = useCreateMode();
   const { projects } = useProjects();
+  const { updateProject } = useProjectMutations();
+  const [isBinding, setIsBinding] = useState(false);
+  const autoLoadedForProject = useRef<string | null>(null);
 
   const repoIds = useMemo(() => repos.map((r) => r.id), [repos]);
   const { branchesByRepo } = useMultiRepoBranches(repoIds);
@@ -41,6 +46,32 @@ export function GitPanelCreateContainer({
   }, [repos, branchesByRepo, targetBranches, setTargetBranch]);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const boundRepoPath = selectedProject?.defaultAgentWorkingDir ?? null;
+
+  // Auto-load bound repo when switching projects
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    if (autoLoadedForProject.current === selectedProjectId) return;
+
+    autoLoadedForProject.current = selectedProjectId;
+
+    if (!boundRepoPath) {
+      clearRepos();
+      return;
+    }
+
+    const loadBoundRepo = async () => {
+      try {
+        const repo = await repoApi.register({ path: boundRepoPath });
+        clearRepos();
+        addRepo(repo);
+      } catch (e) {
+        console.error('[GitPanelCreate] Failed to auto-load bound repo:', e);
+        clearRepos();
+      }
+    };
+    loadBoundRepo();
+  }, [selectedProjectId, boundRepoPath, clearRepos, addRepo]);
 
   const registeredRepoPaths = useMemo(() => repos.map((r) => r.path), [repos]);
 
@@ -49,8 +80,25 @@ export function GitPanelCreateContainer({
     if (result.status === 'saved') {
       setSelectedProjectId(result.project.id);
       clearRepos();
+      autoLoadedForProject.current = result.project.id;
     }
   }, [setSelectedProjectId, clearRepos]);
+
+  const handleBindRepo = useCallback(async () => {
+    if (!selectedProjectId || repos.length === 0) return;
+    const repoPath = repos[0].path;
+    setIsBinding(true);
+    try {
+      await updateProject.mutateAsync({
+        projectId: selectedProjectId,
+        data: { name: null, defaultAgentWorkingDir: repoPath },
+      });
+    } catch (e) {
+      console.error('[GitPanelCreate] Failed to bind repo:', e);
+    } finally {
+      setIsBinding(false);
+    }
+  }, [selectedProjectId, repos, updateProject]);
 
   return (
     <GitPanelCreate
@@ -59,7 +107,10 @@ export function GitPanelCreateContainer({
       projects={projects}
       selectedProjectId={selectedProjectId}
       selectedProjectName={selectedProject?.name}
-      onProjectSelect={(p) => setSelectedProjectId(p.id)}
+      onProjectSelect={(p) => {
+        setSelectedProjectId(p.id);
+        autoLoadedForProject.current = null;
+      }}
       onCreateProject={handleCreateProject}
       onRepoRemove={removeRepo}
       branchesByRepo={branchesByRepo}
@@ -67,6 +118,9 @@ export function GitPanelCreateContainer({
       onBranchChange={setTargetBranch}
       registeredRepoPaths={registeredRepoPaths}
       onRepoRegistered={addRepo}
+      boundRepoPath={boundRepoPath}
+      isBinding={isBinding}
+      onBindRepo={handleBindRepo}
     />
   );
 }

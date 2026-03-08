@@ -106,6 +106,12 @@ If API token is enabled:
 curl http://localhost:23456/api/health -H "Authorization: Bearer <token>"
 ```
 
+## Data Safety
+
+- **Deleting a project does not delete local files.** Only database records (project metadata, project-repo associations) are removed. Repository files on disk are never touched.
+- **Deleting a repository association** only removes the database link between the project and the repo. The actual Git repository on disk remains intact.
+- **Project-repo binding** (`defaultAgentWorkingDir`) stores a reference path. Unbinding or rebinding does not move or delete any files.
+
 ## Architecture at a Glance
 
 - `OrchestratorAgent`: decision and scheduling core.

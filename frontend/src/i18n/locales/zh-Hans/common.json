@@ -328,7 +328,9 @@
   },
   "workspace": {
     "selectProjectTitle": "选择项目",
-    "selectProjectHint": "选择已有项目或创建新项目以开始。",
-    "currentProject": "项目："
+    "selectProjectHint": "请在右侧面板中选择已有项目或创建新项目以开始。",
+    "currentProject": "项目：",
+    "bindRepoTo": "确认绑定仓库 → 项目「{{project}}」",
+    "repoBoundTo": "已绑定到项目「{{project}}」"
   }
 }

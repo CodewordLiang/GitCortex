@@ -1,6 +1,8 @@
 import { useMemo, useCallback } from 'react';
 import { useWorkspaceContext } from '@/contexts/WorkspaceContext';
 import { useActions } from '@/contexts/ActionsContext';
+import { useCreateModeOptional } from '@/contexts/CreateModeContext';
+import { useProjects } from '@/hooks/useProjects';
 import { Navbar } from '../views/Navbar';
 import {
   NavbarActionGroups,
@@ -76,6 +78,11 @@ export function filterVisibleItemPair<
 export function NavbarContainer() {
   const { executeAction } = useActions();
   const { workspace: selectedWorkspace, isCreateMode } = useWorkspaceContext();
+  const createModeCtx = useCreateModeOptional();
+  const { projects } = useProjects();
+  const createModeProjectName = projects.find(
+    (p) => p.id === createModeCtx?.selectedProjectId
+  )?.name;
 
   // Get action visibility context (includes all state for visibility/active/enabled)
   const actionCtx = useActionVisibilityContext();
@@ -104,7 +111,7 @@ export function NavbarContainer() {
   );
 
   const navbarTitle = isCreateMode
-    ? 'Create Workspace'
+    ? (createModeProjectName || 'Create Workspace')
     : selectedWorkspace?.branch;
 
   return (

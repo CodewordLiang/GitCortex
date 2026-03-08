@@ -328,7 +328,9 @@
   },
   "workspace": {
     "selectProjectTitle": "Select a Project",
-    "selectProjectHint": "Choose an existing project or create a new one to get started.",
-    "currentProject": "Project:"
+    "selectProjectHint": "Choose an existing project or create a new one from the right panel to get started.",
+    "currentProject": "Project:",
+    "bindRepoTo": "Bind repository → project \"{{project}}\"",
+    "repoBoundTo": "Bound to project \"{{project}}\""
   }
 }

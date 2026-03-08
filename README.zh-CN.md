@@ -106,6 +106,12 @@ curl http://localhost:23456/api/health
 curl http://localhost:23456/api/health -H "Authorization: Bearer <token>"
 ```
 
+## 数据安全
+
+- **删除项目不会删除本地文件。** 仅移除数据库中的项目元数据和项目-仓库关联记录，磁盘上的仓库文件不受任何影响。
+- **解除仓库关联** 仅移除数据库中项目与仓库的绑定关系，不会删除、移动或修改磁盘上的 Git 仓库。
+- **项目-仓库绑定**（`defaultAgentWorkingDir`）仅存储引用路径，解绑或重新绑定不会对文件系统产生任何操作。
+
 ## 架构摘要
 
 - `OrchestratorAgent`：编排决策与调度核心。
