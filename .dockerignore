@@ -39,6 +39,7 @@
 
 # --- 放行：静态资源（嵌入二进制） ---
 !assets/
+!crates/utils/src/api/organizations.rs
 
 # --- 放行：Docker 自身脚本 ---
 !scripts/docker/entrypoint.sh
