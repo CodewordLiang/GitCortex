@@ -101,8 +101,8 @@ COPY --from=frontend-builder /build/frontend/dist frontend/dist
 RUN --mount=type=cache,id=gitcortex-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=gitcortex-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=gitcortex-cargo-target-v2,target=/build/target,sharing=locked \
-    cargo build --profile docker --locked -p server \
-    && cp /build/target/docker/server /tmp/gitcortex-server
+    cargo build --release --locked -p server \
+    && cp /build/target/release/server /tmp/gitcortex-server
 
 # ============================================================
 # Stage 4: Runtime (minimal footprint)

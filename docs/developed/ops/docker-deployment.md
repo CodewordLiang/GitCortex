@@ -168,7 +168,7 @@ Typical first-time build on gigabit network:
 |-------|------|-------|
 | pnpm install | ~30s | Uses cache mount + corepack (no npm install -g); subsequent builds near-instant |
 | Frontend (Vite) | ~2 min | ~8500 modules |
-| Rust build | ~10 min | Cold build compiles all dependencies and workspace crates |
+| Rust build (`cargo build --release`) | ~10 min | Cold build compiles all dependencies and workspace crates |
 | **Total (cold)** | **~12-15 min** | First build compiles everything |
 | **Total (warm)** | **~4-8 min** | Reuses cargo/pnpm cache mounts |
 
