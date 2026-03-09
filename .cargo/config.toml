@@ -28,3 +28,4 @@ rustflags = ["-C", "link-arg=/DEBUG"]
 AWS_LC_SYS_STATIC = "0"
 AWS_LC_SYS_NO_PREGENERATED_SRC = "0"
 SQLX_OFFLINE = "true"
+

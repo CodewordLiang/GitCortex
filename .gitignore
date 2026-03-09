@@ -25,6 +25,7 @@ tmp_phase*.db*
 
 # Rust
 target/
+vendor/
 **/*.rs.bk
 
 # Auto-generated TypeScript bindings (ts-rs)

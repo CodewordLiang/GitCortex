@@ -34,3 +34,11 @@ async-trait = "0.1"
 debug = 1
 split-debuginfo = "packed"
 strip = true
+
+[profile.docker]
+inherits = "release"
+debug = 0
+split-debuginfo = "off"
+strip = true
+opt-level = 1
+codegen-units = 256
