@@ -4,6 +4,7 @@ param(
     [switch]$PullBaseImages,
     [switch]$SkipBuild,
     [switch]$SkipReadyCheck,
+    [switch]$PreferPrebuiltImage,
     [string]$Port = "",
     [string]$ComposeFile = "",
     [string]$EnvFile = "",
@@ -44,6 +45,10 @@ $script:Messages = @{
         INFO_PRUNING_BUILD_CACHE = "正在清理 BuildKit 执行缓存后重试..."
         INFO_STARTING = "正在应用更新并重启容器..."
         INFO_CHECKING_READY = "正在检查服务就绪: {0}"
+        INFO_TRY_PULL_PREBUILT = "正在尝试拉取预构建镜像: {0}"
+        INFO_PREBUILT_PULL_FAILED = "预构建镜像拉取失败，将回退到本地构建。"
+        INFO_PREBUILT_PRESENT = "检测到本地已存在预构建镜像: {0}"
+        INFO_PREBUILT_USED = "已使用预构建镜像，跳过本地构建。"
         OK_PULL_DONE = "代码更新完成。"
         OK_COMPOSE_VALID = "Compose 配置校验通过。"
         OK_BUILD_DONE = "镜像构建完成。"
@@ -77,6 +82,10 @@ $script:Messages = @{
         INFO_PRUNING_BUILD_CACHE = "Pruning BuildKit exec cache before retry..."
         INFO_STARTING = "Applying update and restarting container..."
         INFO_CHECKING_READY = "Checking readiness: {0}"
+        INFO_TRY_PULL_PREBUILT = "Trying to pull prebuilt image: {0}"
+        INFO_PREBUILT_PULL_FAILED = "Failed to pull prebuilt image. Falling back to local build."
+        INFO_PREBUILT_PRESENT = "Prebuilt image already exists locally: {0}"
+        INFO_PREBUILT_USED = "Using prebuilt image, local build skipped."
         OK_PULL_DONE = "Source update completed."
         OK_COMPOSE_VALID = "Compose configuration is valid."
         OK_BUILD_DONE = "Build completed."
@@ -447,6 +456,72 @@ function Wait-Ready {
     return $false
 }
 
+function Resolve-PrebuiltImageCandidates {
+    param(
+        [string]$Registry,
+        [string]$Namespace,
+        [string]$BuildNetworkProfile
+    )
+
+    $repo = if ([string]::IsNullOrWhiteSpace($Namespace)) {
+        "gitcortex"
+    }
+    else {
+        "$Namespace/gitcortex"
+    }
+
+    $profileTag = if ($BuildNetworkProfile -eq "china") { "china" } else { "official" }
+
+    $candidates = @(
+        "$Registry/$repo:latest-$profileTag",
+        "$Registry/$repo:latest"
+    )
+
+    return $candidates | Select-Object -Unique
+}
+
+function Test-ImageExistsLocal {
+    param([string]$Image)
+
+    & docker image inspect $Image *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Try-PullPrebuiltImage {
+    param(
+        [string[]]$Candidates,
+        [string]$TargetTag
+    )
+
+    foreach ($candidate in $Candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        if (Test-ImageExistsLocal -Image $candidate) {
+            Write-Info (Tf "INFO_PREBUILT_PRESENT" @($candidate))
+            & docker image tag $candidate $TargetTag
+            if ($LASTEXITCODE -eq 0) {
+                Write-Info (T "INFO_PREBUILT_USED")
+                return $true
+            }
+        }
+
+        Write-Info (Tf "INFO_TRY_PULL_PREBUILT" @($candidate))
+        & docker pull $candidate
+        if ($LASTEXITCODE -eq 0) {
+            & docker image tag $candidate $TargetTag
+            if ($LASTEXITCODE -eq 0) {
+                Write-Info (T "INFO_PREBUILT_USED")
+                return $true
+            }
+        }
+    }
+
+    Write-Warn (T "INFO_PREBUILT_PULL_FAILED")
+    return $false
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir "..\..")).Path
 $composeFilePath = if ([string]::IsNullOrWhiteSpace($ComposeFile)) {
@@ -514,6 +589,25 @@ try {
     if ([string]::IsNullOrWhiteSpace($buildNetworkProfile)) {
         $buildNetworkProfile = "official"
     }
+
+    $imageRegistry = Get-EnvValue -Path $envFilePath -Name "GITCORTEX_IMAGE_REGISTRY"
+    if ([string]::IsNullOrWhiteSpace($imageRegistry)) {
+        $imageRegistry = "ghcr.io"
+    }
+    else {
+        $imageRegistry = $imageRegistry.Trim().TrimEnd("/")
+    }
+
+    $imageNamespace = Get-EnvValue -Path $envFilePath -Name "GITCORTEX_IMAGE_NAMESPACE"
+    if (-not [string]::IsNullOrWhiteSpace($imageNamespace)) {
+        $imageNamespace = $imageNamespace.Trim().Trim("/")
+    }
+
+    $imagePullPolicy = Get-EnvValue -Path $envFilePath -Name "GITCORTEX_IMAGE_PULL_POLICY"
+    if (-not ($imagePullPolicy -in @("always", "missing", "never"))) {
+        $imagePullPolicy = "missing"
+    }
+
     Write-Info (Tf "INFO_BUILD_NETWORK_PROFILE" @($buildNetworkProfile))
 
     Write-Info (T "INFO_VALIDATING")
@@ -524,11 +618,34 @@ try {
     Write-Ok (T "OK_COMPOSE_VALID")
 
     if (-not $SkipBuild) {
-        Write-Info (T "INFO_BUILDING")
-        $env:DOCKER_BUILDKIT = "1"
-        $env:COMPOSE_DOCKER_CLI_BUILD = "1"
-        Invoke-ComposeBuildWithRetry -ComposeFilePath $composeFilePath -EnvFilePath $envFilePath -ShouldPullBaseImages $PullBaseImages.IsPresent
-        Write-Ok (T "OK_BUILD_DONE")
+        $targetComposeImage = "gitcortex-gitcortex:latest"
+        $usedPrebuilt = $false
+
+        if ($PreferPrebuiltImage -and $imagePullPolicy -ne "never") {
+            $pullCandidates = Resolve-PrebuiltImageCandidates -Registry $imageRegistry -Namespace $imageNamespace -BuildNetworkProfile $buildNetworkProfile
+
+            $shouldTryPull = $false
+            switch ($imagePullPolicy) {
+                "always" { $shouldTryPull = $true }
+                "missing" {
+                    if (-not (Test-ImageExistsLocal -Image $targetComposeImage)) {
+                        $shouldTryPull = $true
+                    }
+                }
+            }
+
+            if ($shouldTryPull) {
+                $usedPrebuilt = Try-PullPrebuiltImage -Candidates $pullCandidates -TargetTag $targetComposeImage
+            }
+        }
+
+        if (-not $usedPrebuilt) {
+            Write-Info (T "INFO_BUILDING")
+            $env:DOCKER_BUILDKIT = "1"
+            $env:COMPOSE_DOCKER_CLI_BUILD = "1"
+            Invoke-ComposeBuildWithRetry -ComposeFilePath $composeFilePath -EnvFilePath $envFilePath -ShouldPullBaseImages $PullBaseImages.IsPresent
+            Write-Ok (T "OK_BUILD_DONE")
+        }
     }
 
     Write-Info (T "INFO_STARTING")

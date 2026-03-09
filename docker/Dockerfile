@@ -49,7 +49,6 @@ FROM rust:slim-trixie AS rust-base
 ARG GITCORTEX_BUILD_NETWORK_PROFILE
 ARG RUST_TOOLCHAIN
 
-# Layer 1: apt dependencies — changes almost never, cached for months
 RUN set -eux; \
     if [ "$GITCORTEX_BUILD_NETWORK_PROFILE" = "china" ]; then \
         sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || \
@@ -62,7 +61,6 @@ RUN set -eux; \
         cmake make ninja-build clang libclang-dev perl nasm libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Layer 2: Rust toolchain — changes only when RUST_TOOLCHAIN arg changes
 RUN set -eux; \
     if [ "$GITCORTEX_BUILD_NETWORK_PROFILE" = "china" ]; then \
         export RUSTUP_DIST_SERVER=https://rsproxy.cn; \
@@ -79,7 +77,6 @@ ENV SQLX_OFFLINE=true \
     CARGO_HTTP_MULTIPLEXING=false \
     CARGO_NET_GIT_FETCH_WITH_CLI=true
 
-# China cargo mirror
 RUN set -eux; \
     if [ "$GITCORTEX_BUILD_NETWORK_PROFILE" = "china" ]; then \
         mkdir -p /usr/local/cargo && \
@@ -88,58 +85,14 @@ RUN set -eux; \
     fi
 
 # ============================================================
-# Stage 3: Rust dependency pre-build (skeleton pattern)
-# Only re-runs when Cargo.toml/Cargo.lock/member list change
-# ============================================================
-FROM rust-base AS rust-deps
-WORKDIR /build
-
-# Copy workspace root manifests
-COPY Cargo.toml Cargo.lock ./
-COPY .cargo/config.toml .cargo/config.toml
-
-# Copy ONLY Cargo.toml from each crate (not source code!)
-COPY crates/server/Cargo.toml crates/server/Cargo.toml
-COPY crates/db/Cargo.toml crates/db/Cargo.toml
-COPY crates/services/Cargo.toml crates/services/Cargo.toml
-COPY crates/executors/Cargo.toml crates/executors/Cargo.toml
-COPY crates/utils/Cargo.toml crates/utils/Cargo.toml
-COPY crates/local-deployment/Cargo.toml crates/local-deployment/Cargo.toml
-COPY crates/deployment/Cargo.toml crates/deployment/Cargo.toml
-COPY crates/review/Cargo.toml crates/review/Cargo.toml
-COPY crates/cc-switch/Cargo.toml crates/cc-switch/Cargo.toml
-
-# Generate minimal stub source files so cargo can resolve the dep graph
-# This layer is only invalidated by Cargo.toml changes, NOT source changes
-RUN set -eux; \
-    for dir in crates/*/; do \
-        crate_name="$(basename "$dir")"; \
-        manifest="$dir/Cargo.toml"; \
-        if [ ! -f "$manifest" ]; then continue; fi; \
-        mkdir -p "$dir/src"; \
-        if grep -q '\[\[bin\]\]' "$manifest" || grep -q 'src/main.rs' "$manifest" || [ "$crate_name" = "server" ]; then \
-            echo 'fn main() {}' > "$dir/src/main.rs"; \
-        fi; \
-        echo '// stub' > "$dir/src/lib.rs"; \
-    done
-
-# Pre-compile all dependencies (not our code — stubs are trivial)
-RUN --mount=type=cache,id=gitcortex-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=gitcortex-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=gitcortex-cargo-target,target=/build/target,sharing=locked \
-    cargo build --profile docker -p server 2>/dev/null || true
-
-# ============================================================
-# Stage 4: Rust final build (only recompiles changed crates)
+# Stage 3: Rust final build
+# 稳定优先：不再使用 skeleton 预编译，避免污染 cargo target cache
 # ============================================================
 FROM rust-base AS rust-builder
 WORKDIR /build
 
-# Re-copy workspace manifests (needed for cargo)
 COPY Cargo.toml Cargo.lock ./
 COPY .cargo/config.toml .cargo/config.toml
-
-# Copy ALL real source code — overwrites any stubs
 COPY crates/ crates/
 COPY assets/ assets/
 COPY shared/ shared/
@@ -152,14 +105,13 @@ RUN --mount=type=cache,id=gitcortex-cargo-registry,target=/usr/local/cargo/regis
     && cp /build/target/docker/server /tmp/gitcortex-server
 
 # ============================================================
-# Stage 5: Runtime (minimal footprint)
+# Stage 4: Runtime (minimal footprint)
 # ============================================================
 FROM debian:trixie-slim AS runtime
 ARG GITCORTEX_BUILD_NETWORK_PROFILE
 ARG INSTALL_AI_CLIS=0
 ARG NODE_MAJOR=22
 
-# Layer 1: system packages + Node.js (for AI CLI npm installs at runtime)
 RUN set -eux; \
     if [ "$GITCORTEX_BUILD_NETWORK_PROFILE" = "china" ]; then \
         sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || \
@@ -171,7 +123,6 @@ RUN set -eux; \
         libsqlite3-0 libgit2-1.9 git curl ca-certificates bash gnupg xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js from nodesource — lightweight, single-purpose
 RUN set -eux; \
     if [ "$GITCORTEX_BUILD_NETWORK_PROFILE" = "china" ]; then \
         NODE_DIST_URL="https://npmmirror.com/mirrors/node"; \
@@ -198,7 +149,6 @@ RUN set -eux; \
         npm config --global set registry https://registry.npmmirror.com; \
     fi
 
-# Optional: gh CLI for copilot extension
 RUN set -eux; \
     if [ "$INSTALL_AI_CLIS" = "1" ]; then \
         mkdir -p /etc/apt/keyrings; \

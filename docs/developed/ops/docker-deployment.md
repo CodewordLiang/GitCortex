@@ -53,7 +53,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\docker\update-docker.ps1 -Pul
 What it does:
 - optionally runs `git pull --ff-only`
 - validates `docker/compose/.env`
-- rebuilds the image
+- can pull prebuilt image first (if enabled)
+- falls back to local build when prebuilt image is unavailable
 - recreates containers
 - waits for `/readyz`
 
@@ -80,6 +81,9 @@ curl http://localhost:23456/readyz
 | `HOST_WORKSPACE_ROOT` | No | `../..` | Host path mounted into container for repo discovery |
 | `GITCORTEX_WORKSPACE_ROOT` | No | `/workspace` | Workspace mount point in container |
 | `GITCORTEX_ALLOWED_ROOTS` | No | `/workspace,/var/lib/gitcortex` | Allowed roots for filesystem scanning |
+| `GITCORTEX_IMAGE_REGISTRY` | No | `ghcr.io` | Prebuilt image registry host for pull-first strategy |
+| `GITCORTEX_IMAGE_NAMESPACE` | No | `huanchong-99` | Registry namespace/user for prebuilt images |
+| `GITCORTEX_IMAGE_PULL_POLICY` | No | `missing` | Pull policy: `always` / `missing` / `never` |
 | `INSTALL_AI_CLIS` | No | `0` | Set to `1` to install AI CLIs during image build |
 | `GITCORTEX_AUTO_SETUP_PROJECTS` | No | `1` | Set to `0` to disable auto-creating starter projects on first launch |
 
@@ -144,6 +148,18 @@ docker compose -f docker/compose/docker-compose.yml restart
 2. Run `cargo run -p server` directly (no env vars needed, original paths used)
 3. SQLite can be copied from Docker volume if needed
 
+## Pull-First Deployment Strategy
+
+To improve startup speed in weak networks without committing local artifacts, installer/update scripts support a pull-first strategy:
+
+1. Use local prebuilt image if already available
+2. Try pulling prebuilt image from registry (based on profile tag)
+3. Fall back to local build automatically if pull fails
+
+Image tags attempted in order:
+- `latest-<profile>` (`latest-china` or `latest-official`)
+- `latest`
+
 ## Build Times and Stability
 
 Typical first-time build on gigabit network:
@@ -152,10 +168,9 @@ Typical first-time build on gigabit network:
 |-------|------|-------|
 | pnpm install | ~30s | Uses cache mount + corepack (no npm install -g); subsequent builds near-instant |
 | Frontend (Vite) | ~2 min | ~8500 modules |
-| Rust deps (skeleton) | ~8 min | First build only; cached until Cargo.toml changes |
-| Rust final build | ~2 min | Only recompiles changed crates (deps from cache mount) |
-| **Total (cold)** | **~13 min** | First build compiles everything |
-| **Total (warm)** | **~3 min** | Incremental: only changed source recompiled |
+| Rust build | ~10 min | Cold build compiles all dependencies and workspace crates |
+| **Total (cold)** | **~12-15 min** | First build compiles everything |
+| **Total (warm)** | **~4-8 min** | Reuses cargo/pnpm cache mounts |
 
 **Stability**: `.npmrc` includes `network-timeout=300000` and `fetch-retries=5` to reduce hangs on flaky networks. If pnpm gets stuck at a specific package (e.g. 685/686), the store cache may be corrupted:
 
