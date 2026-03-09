@@ -83,5 +83,4 @@ jobs:
         file: docker/Dockerfile
         push: false
         tags: gitcortex:ci-test
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        no-cache: true
