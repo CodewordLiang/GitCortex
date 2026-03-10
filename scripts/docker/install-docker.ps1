@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("install", "update")]
     [string]$Mode = "",
     [string]$HostWorkspaceRoot,
@@ -495,7 +495,7 @@ function Invoke-ProcessWithWatchdog {
         Write-NewProcessOutput -Path $stderrFile -LineCount ([ref]$stderrLineCount)
 
         return @{
-            ExitCode = if ($stalled) { -1 } else { $process.ExitCode }
+            ExitCode = if ($stalled) { -1 } elseif ($null -eq $process.ExitCode) { 0 } else { $process.ExitCode }
             Stalled = $stalled
             Output = Get-CombinedProcessOutput -Paths @($stdoutFile, $stderrFile)
         }
@@ -691,8 +691,12 @@ function Resolve-PrebuiltImageCandidates {
 function Test-ImageExistsLocal {
     param([string]$Image)
 
-    & docker image inspect $Image *> $null
-    return ($LASTEXITCODE -eq 0)
+    try {
+        $null = & docker image inspect $Image 2>&1
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
 }
 
 function Try-PullPrebuiltImage {
@@ -708,22 +712,28 @@ function Try-PullPrebuiltImage {
 
         if (Test-ImageExistsLocal -Image $candidate) {
             Write-Info (Tf "INFO_PREBUILT_PRESENT" @($candidate))
-            & docker image tag $candidate $TargetTag
-            if ($LASTEXITCODE -eq 0) {
-                Write-Info (T "INFO_PREBUILT_USED")
-                return $true
-            }
+            try {
+                & docker image tag $candidate $TargetTag 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Info (T "INFO_PREBUILT_USED")
+                    return $true
+                }
+            } catch { }
         }
 
         Write-Info (Tf "INFO_TRY_PULL_PREBUILT" @($candidate))
-        & docker pull $candidate
-        if ($LASTEXITCODE -eq 0) {
-            & docker image tag $candidate $TargetTag
+        try {
+            & docker pull $candidate 2>&1
             if ($LASTEXITCODE -eq 0) {
-                Write-Info (T "INFO_PREBUILT_USED")
-                return $true
+                try {
+                    & docker image tag $candidate $TargetTag 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Info (T "INFO_PREBUILT_USED")
+                        return $true
+                    }
+                } catch { }
             }
-        }
+        } catch { }
     }
 
     Write-Warn (T "INFO_PREBUILT_PULL_FAILED")
