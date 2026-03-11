@@ -1,0 +1,114 @@
+# GitCortex Quality Gate Configuration
+#
+# 质量门策略定义 — 控制代码质量的自动检查和阻断行为
+# 质量门模型设计参考 SonarQube (LGPL-3.0)
+#
+# 模式说明:
+#   off     — 关闭质量门，走旧流程
+#   shadow  — 运行分析并记录结果，但不阻断流程（观察期）
+#   warn    — 分析并回流问题到终端，但不硬性阻断合并
+#   enforce — 硬性门禁，不通过则阻断
+
+mode: shadow
+
+# ── 终端级质量门 ──
+# 触发时机: 每次 checkpoint commit
+# 目标: 快速阻断当前终端产出的低级错误
+terminal_gate:
+  name: "Terminal Gate"
+  conditions:
+    - metric: cargo_check_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: clippy_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: tsc_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: rust_test_failures
+      operator: "GT"
+      threshold: "0"
+    - metric: frontend_test_failures
+      operator: "GT"
+      threshold: "0"
+
+# ── 分支级质量门 ──
+# 触发时机: 任务最后一个终端通过后
+# 目标: 覆盖整个 task branch 的完整检查
+branch_gate:
+  name: "Branch Gate"
+  conditions:
+    - metric: cargo_check_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: clippy_warnings
+      operator: "GT"
+      threshold: "0"
+    - metric: clippy_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: fmt_violations
+      operator: "GT"
+      threshold: "0"
+    - metric: eslint_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: tsc_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: test_failures
+      operator: "GT"
+      threshold: "0"
+
+# ── 仓库级质量门 ──
+# 触发时机: 合并主分支前 / GitHub Actions
+# 目标: 统一 Sonar 质量门、全量测试、构建、部署检查
+repo_gate:
+  name: "Repo Gate"
+  conditions:
+    - metric: cargo_check_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: clippy_warnings
+      operator: "GT"
+      threshold: "0"
+    - metric: clippy_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: fmt_violations
+      operator: "GT"
+      threshold: "0"
+    - metric: eslint_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: tsc_errors
+      operator: "GT"
+      threshold: "0"
+    - metric: test_failures
+      operator: "GT"
+      threshold: "0"
+    - metric: sonar_blocker_issues
+      operator: "GT"
+      threshold: "0"
+    - metric: sonar_critical_issues
+      operator: "GT"
+      threshold: "0"
+    - metric: security_issues
+      operator: "GT"
+      threshold: "0"
+
+# ── Provider 启用/禁用 ──
+providers:
+  rust: true
+  frontend: true
+  repo: true
+  security: true
+  sonar: true
+
+# ── SonarQube 本地配置 ──
+sonar:
+  host_url: "http://localhost:9000"
+  project_key: "gitcortex"
+  # token 建议通过环境变量 SONAR_TOKEN 设置
+  # token: null

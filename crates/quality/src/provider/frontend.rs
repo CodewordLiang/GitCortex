@@ -1,0 +1,252 @@
+//! Frontend 分析器 Provider
+//!
+//! 封装 pnpm lint / pnpm check / pnpm test:run 命令
+
+use async_trait::async_trait;
+use std::path::Path;
+use std::time::Instant;
+use tracing::{debug, warn};
+
+use crate::gate::result::MeasureValue;
+use crate::issue::QualityIssue;
+use crate::metrics::MetricKey;
+use crate::provider::{ProviderReport, QualityProvider};
+use crate::rule::{AnalyzerSource, RuleType, Severity};
+
+/// Frontend 分析器 Provider
+pub struct FrontendProvider {
+    /// 前端目录（相对于项目根）
+    pub frontend_dir: String,
+    pub enable_lint: bool,
+    pub enable_check: bool,
+    pub enable_test: bool,
+}
+
+impl Default for FrontendProvider {
+    fn default() -> Self {
+        Self {
+            frontend_dir: "frontend".to_string(),
+            enable_lint: true,
+            enable_check: true,
+            enable_test: true,
+        }
+    }
+}
+
+#[async_trait]
+impl QualityProvider for FrontendProvider {
+    fn name(&self) -> &str {
+        "frontend"
+    }
+
+    fn supported_metrics(&self) -> Vec<MetricKey> {
+        vec![
+            MetricKey::EslintErrors,
+            MetricKey::EslintWarnings,
+            MetricKey::TscErrors,
+            MetricKey::FrontendTestFailures,
+        ]
+    }
+
+    async fn analyze(
+        &self,
+        project_root: &Path,
+        _changed_files: Option<&[String]>,
+    ) -> anyhow::Result<ProviderReport> {
+        let start = Instant::now();
+        let mut report = ProviderReport::success("frontend", 0);
+        let mut all_issues = Vec::new();
+        let frontend_dir = project_root.join(&self.frontend_dir);
+
+        // 1. pnpm lint (ESLint)
+        if self.enable_lint {
+            debug!("Running pnpm lint...");
+            let output = run_frontend_command(&frontend_dir, &["lint"]).await;
+            match output {
+                Ok(out) => {
+                    let (errors, warnings, issues) = parse_eslint_output(&out.stdout);
+                    report.metrics.insert(MetricKey::EslintErrors, MeasureValue::Int(errors));
+                    report.metrics.insert(MetricKey::EslintWarnings, MeasureValue::Int(warnings));
+                    all_issues.extend(issues);
+                }
+                Err(e) => {
+                    warn!("pnpm lint failed: {}", e);
+                    report.metrics.insert(MetricKey::EslintErrors, MeasureValue::Int(-1));
+                }
+            }
+        }
+
+        // 2. pnpm check (TypeScript tsc)
+        if self.enable_check {
+            debug!("Running pnpm check...");
+            let output = run_frontend_command(&frontend_dir, &["check"]).await;
+            match output {
+                Ok(out) => {
+                    let (errors, issues) = parse_tsc_output(&out.stdout);
+                    report.metrics.insert(MetricKey::TscErrors, MeasureValue::Int(errors));
+                    all_issues.extend(issues);
+                }
+                Err(e) => {
+                    warn!("pnpm check failed: {}", e);
+                    report.metrics.insert(MetricKey::TscErrors, MeasureValue::Int(-1));
+                }
+            }
+        }
+
+        // 3. pnpm test:run (Vitest)
+        if self.enable_test {
+            debug!("Running pnpm test:run...");
+            let output = run_frontend_command(&frontend_dir, &["test:run"]).await;
+            match output {
+                Ok(out) => {
+                    let (failures, issues) = parse_vitest_output(&out.stdout);
+                    report.metrics.insert(MetricKey::FrontendTestFailures, MeasureValue::Int(failures));
+                    all_issues.extend(issues);
+                }
+                Err(e) => {
+                    warn!("pnpm test:run failed: {}", e);
+                    report.metrics.insert(MetricKey::FrontendTestFailures, MeasureValue::Int(-1));
+                }
+            }
+        }
+
+        report.issues = all_issues;
+        report.duration_ms = start.elapsed().as_millis() as u64;
+
+        Ok(report)
+    }
+}
+
+/// 解析 ESLint 输出
+fn parse_eslint_output(output: &str) -> (i64, i64, Vec<QualityIssue>) {
+    let mut errors = 0i64;
+    let mut warnings = 0i64;
+    let mut issues = Vec::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        // 解析 ESLint 默认输出格式: "file:line:col severity message rule"
+        if trimmed.contains("error") {
+            errors += 1;
+            issues.push(QualityIssue::new(
+                "eslint::error",
+                RuleType::Bug,
+                Severity::Critical,
+                AnalyzerSource::EsLint,
+                trimmed,
+            ));
+        } else if trimmed.contains("warning") {
+            warnings += 1;
+            issues.push(QualityIssue::new(
+                "eslint::warning",
+                RuleType::CodeSmell,
+                Severity::Major,
+                AnalyzerSource::EsLint,
+                trimmed,
+            ));
+        }
+
+        // 解析汇总行: "X problems (Y errors, Z warnings)"
+        if trimmed.contains("problems") {
+            if let Some(summary) = parse_eslint_summary(trimmed) {
+                errors = summary.0;
+                warnings = summary.1;
+            }
+        }
+    }
+
+    (errors, warnings, issues)
+}
+
+/// 解析 ESLint 汇总行
+fn parse_eslint_summary(line: &str) -> Option<(i64, i64)> {
+    // 格式: "N problems (X errors, Y warnings)"
+    let re = regex::Regex::new(r"(\d+)\s+errors?,\s+(\d+)\s+warnings?").ok()?;
+    let caps = re.captures(line)?;
+    let errors = caps.get(1)?.as_str().parse().ok()?;
+    let warnings = caps.get(2)?.as_str().parse().ok()?;
+    Some((errors, warnings))
+}
+
+/// 解析 TypeScript 编译器输出
+fn parse_tsc_output(output: &str) -> (i64, Vec<QualityIssue>) {
+    let mut errors = 0i64;
+    let mut issues = Vec::new();
+
+    for line in output.lines() {
+        // tsc 输出格式: "file(line,col): error TSxxxx: message"
+        if line.contains("error TS") {
+            errors += 1;
+            issues.push(QualityIssue::new(
+                "tsc::error",
+                RuleType::Bug,
+                Severity::Critical,
+                AnalyzerSource::TypeScript,
+                line.trim(),
+            ));
+        }
+    }
+
+    (errors, issues)
+}
+
+/// 解析 Vitest 输出
+fn parse_vitest_output(output: &str) -> (i64, Vec<QualityIssue>) {
+    let mut failures = 0i64;
+    let mut issues = Vec::new();
+
+    for line in output.lines() {
+        if line.contains("FAIL") && !line.contains("Tests:") {
+            failures += 1;
+            issues.push(QualityIssue::new(
+                "vitest::failure",
+                RuleType::Bug,
+                Severity::Critical,
+                AnalyzerSource::Vitest,
+                line.trim(),
+            ));
+        }
+
+        // 解析 Vitest 汇总行: "Tests: X failed, Y passed, Z total"
+        if line.contains("Tests:") && line.contains("failed") {
+            if let Some(n) = extract_number_before(line, "failed") {
+                failures = n;
+            }
+        }
+    }
+
+    (failures, issues)
+}
+
+/// 从文本中提取指定词前面的数字
+fn extract_number_before(text: &str, keyword: &str) -> Option<i64> {
+    let idx = text.find(keyword)?;
+    let before = &text[..idx].trim();
+    let num_str = before.rsplit(|c: char| !c.is_ascii_digit()).next()?;
+    num_str.parse().ok()
+}
+
+/// 命令输出
+struct CommandOutput {
+    stdout: String,
+    #[allow(dead_code)]
+    stderr: String,
+    #[allow(dead_code)]
+    success: bool,
+}
+
+/// 执行前端 pnpm 命令
+async fn run_frontend_command(cwd: &Path, args: &[&str]) -> anyhow::Result<CommandOutput> {
+    let output = tokio::process::Command::new("pnpm")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .await?;
+
+    Ok(CommandOutput {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        success: output.status.success(),
+    })
+}
