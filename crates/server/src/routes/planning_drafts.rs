@@ -28,6 +28,7 @@ pub struct CreateDraftRequest {
     pub planner_model_id: Option<String>,
     pub planner_api_type: Option<String>,
     pub planner_base_url: Option<String>,
+    pub planner_api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,6 +124,7 @@ async fn create_draft(
     draft.planner_model_id = req.planner_model_id;
     draft.planner_api_type = req.planner_api_type;
     draft.planner_base_url = req.planner_base_url;
+    draft.planner_api_key = req.planner_api_key;
 
     PlanningDraft::insert(&deployment.db().pool, &draft)
         .await

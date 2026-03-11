@@ -696,6 +696,47 @@ impl OrchestratorRuntime {
         running.contains_key(workflow_id)
     }
 
+    /// Get live provider status for a running workflow.
+    ///
+    /// Returns `None` if the workflow is not currently running.
+    pub async fn get_provider_status(
+        &self,
+        workflow_id: &str,
+    ) -> Option<Vec<super::resilient_llm::ProviderStatusReport>> {
+        let agent = {
+            let running = self.running_workflows.lock().await;
+            running
+                .get(workflow_id)
+                .map(|rw| Arc::clone(&rw.agent))
+        };
+
+        match agent {
+            Some(agent) => Some(agent.get_provider_status().await),
+            None => None,
+        }
+    }
+
+    /// Reset a provider's circuit breaker for a running workflow.
+    ///
+    /// Returns `Ok(true)` if the provider was found and reset,
+    /// `Ok(false)` if the provider name was not found,
+    /// `Err` if the workflow is not running.
+    pub async fn reset_provider(
+        &self,
+        workflow_id: &str,
+        provider_name: &str,
+    ) -> Result<bool> {
+        let agent = {
+            let running = self.running_workflows.lock().await;
+            running
+                .get(workflow_id)
+                .map(|rw| Arc::clone(&rw.agent))
+                .ok_or_else(|| anyhow!("Workflow {} is not running", workflow_id))?
+        };
+
+        Ok(agent.reset_provider(provider_name).await)
+    }
+
     /// Get the count of running workflows
     pub async fn running_count(&self) -> usize {
         let running = self.running_workflows.lock().await;
@@ -724,16 +765,14 @@ impl OrchestratorRuntime {
 
     /// Recover workflows that were running at startup
     ///
-    /// Finds all workflows with status 'running' and marks them as 'failed',
-    /// as they were likely interrupted by a crash or restart.
+    /// Finds all workflows with status 'running' and attempts to resume them
+    /// from persisted state. Workflows without persisted state or whose resume
+    /// fails are marked as 'failed'.
     /// Returns the number of interrupted workflows discovered.
     /// Should be called on service startup.
     pub async fn recover_running_workflows(&self) -> Result<usize> {
-        // Query for workflows with status 'running'
-        // Note: We need to add this method to Workflow model, but for now use a workaround
         let pool = &self.db.pool;
 
-        // Direct SQL query to find running workflows
         let rows = sqlx::query(
             r#"
             SELECT id
@@ -749,79 +788,44 @@ impl OrchestratorRuntime {
             return Ok(0);
         }
 
-        let recovered_workflow_count = rows.len();
-        warn!("Found {} running workflows to recover", recovered_workflow_count);
+        let discovered_count = rows.len();
+        warn!("Found {} running workflows to recover", discovered_count);
 
         for row in rows {
             let workflow_id: String = row.get("id");
             warn!("Recovering workflow {}", workflow_id);
 
-            // Try to load persisted state
-            match self.persistence.recover_workflow(&workflow_id).await {
-                Ok(Some(state)) => {
+            match self.try_resume_workflow(&workflow_id).await {
+                Ok(true) => {
                     info!(
-                        "Successfully recovered state for workflow {} with {} tasks and {} messages",
-                        workflow_id,
-                        state.task_states.len(),
-                        state.conversation_history.len()
+                        workflow_id = %workflow_id,
+                        "Workflow resumed from persisted state"
                     );
-
-                    // For now, we mark the workflow as failed since we can't automatically
-                    // resume without more complex recovery logic
-                    // In the future, this could restart the workflow with the recovered state
-                    if let Err(e) = db::models::Workflow::update_status(
-                        pool,
-                        &workflow_id,
-                        WORKFLOW_STATUS_FAILED,
-                    )
-                    .await
-                    {
-                        error!(
-                            "Failed to mark workflow {} as failed during recovery: {}",
-                            workflow_id, e
-                        );
-                    } else {
-                        info!(
-                            "Workflow {} marked as failed (state recovered but auto-resume not implemented)",
-                            workflow_id
-                        );
-                    }
                 }
-                Ok(None) => {
-                    warn!("No persisted state found for workflow {}", workflow_id);
-
-                    // Mark as failed since we can't recover without state
-                    if let Err(e) = db::models::Workflow::update_status(
-                        pool,
-                        &workflow_id,
-                        WORKFLOW_STATUS_FAILED,
-                    )
-                    .await
+                Ok(false) => {
+                    warn!(
+                        workflow_id = %workflow_id,
+                        "No persisted state found, marking as failed"
+                    );
+                    if let Err(e) =
+                        db::models::Workflow::update_status(pool, &workflow_id, WORKFLOW_STATUS_FAILED)
+                            .await
                     {
                         error!(
                             "Failed to mark workflow {} as failed during recovery: {}",
                             workflow_id, e
-                        );
-                    } else {
-                        info!(
-                            "Workflow {} marked as failed (no state recovered)",
-                            workflow_id
                         );
                     }
                 }
                 Err(e) => {
                     error!(
-                        "Failed to recover state for workflow {}: {}",
-                        workflow_id, e
+                        workflow_id = %workflow_id,
+                        error = %e,
+                        "Recovery failed, marking as failed"
                     );
-
-                    // Still mark as failed even if state recovery failed
-                    if let Err(e) = db::models::Workflow::update_status(
-                        pool,
-                        &workflow_id,
-                        WORKFLOW_STATUS_FAILED,
-                    )
-                    .await
+                    if let Err(e) =
+                        db::models::Workflow::update_status(pool, &workflow_id, WORKFLOW_STATUS_FAILED)
+                            .await
                     {
                         error!(
                             "Failed to mark workflow {} as failed during recovery: {}",
@@ -832,7 +836,157 @@ impl OrchestratorRuntime {
             }
         }
 
-        Ok(recovered_workflow_count)
+        Ok(discovered_count)
+    }
+
+    /// Attempt to resume a single workflow from persisted state.
+    ///
+    /// Returns `Ok(true)` if the workflow was successfully resumed,
+    /// `Ok(false)` if no persisted state was available, or `Err` on failure.
+    async fn try_resume_workflow(&self, workflow_id: &str) -> Result<bool> {
+        // Load persisted state; return false if none exists
+        let recovered_state = match self.persistence.recover_workflow(workflow_id).await? {
+            Some(state) => state,
+            None => return Ok(false),
+        };
+
+        info!(
+            workflow_id = %workflow_id,
+            tasks = recovered_state.task_states.len(),
+            messages = recovered_state.conversation_history.len(),
+            tokens = recovered_state.total_tokens_used,
+            "Persisted state loaded, attempting resume"
+        );
+
+        // Load workflow record to build orchestrator config
+        let workflow = db::models::Workflow::find_by_id(&self.db.pool, workflow_id)
+            .await?
+            .ok_or_else(|| anyhow!("Workflow {} not found during recovery", workflow_id))?;
+
+        // Build orchestrator config (mirrors start_workflow_reserved logic)
+        let orchestrator_config = if workflow.orchestrator_enabled {
+            let api_key = workflow
+                .get_api_key()?
+                .ok_or_else(|| anyhow!("Orchestrator API key not configured for recovery"))?;
+
+            Some(
+                OrchestratorConfig::from_workflow(
+                    workflow.orchestrator_api_type.as_deref(),
+                    workflow.orchestrator_base_url.as_deref(),
+                    Some(&api_key),
+                    workflow.orchestrator_model.as_deref(),
+                )
+                .ok_or_else(|| anyhow!("Invalid orchestrator configuration during recovery"))?,
+            )
+        } else {
+            None
+        };
+
+        let config = orchestrator_config.unwrap_or_default();
+        let mut agent = OrchestratorAgent::new(
+            config,
+            workflow_id.to_string(),
+            self.message_bus.clone(),
+            self.db.clone(),
+        )?;
+
+        if let Some(runtime_actions) = self.runtime_actions.read().await.clone() {
+            agent.attach_runtime_actions(runtime_actions);
+        }
+        agent.attach_persistence(Arc::new(StatePersistence::new(self.db.clone())));
+        let agent = Arc::new(agent);
+
+        // Inject the recovered state into the agent
+        agent.restore_state(recovered_state).await;
+
+        // Spawn agent task (same pattern as start_workflow_reserved)
+        let agent_clone = agent.clone();
+        let running_workflows = self.running_workflows.clone();
+        let git_watchers = self.git_watchers.clone();
+        let chat_idempotency = self.orchestrator_chat_idempotency.clone();
+        let workflow_id_owned = workflow_id.to_string();
+        let task_handle = tokio::spawn(async move {
+            if let Err(e) = agent_clone.run().await {
+                error!(
+                    "Recovered orchestrator agent failed for workflow {}: {}",
+                    workflow_id_owned, e
+                );
+            }
+
+            // Best-effort cleanup (mirrors start_workflow_reserved)
+            let mut removed_running = false;
+            for _ in 0..5 {
+                let mut running = running_workflows.lock().await;
+                let can_remove = running
+                    .get(&workflow_id_owned)
+                    .map(|entry| entry.task_handle.is_finished())
+                    .unwrap_or(false);
+
+                if can_remove {
+                    running.remove(&workflow_id_owned);
+                    removed_running = true;
+                    break;
+                }
+
+                drop(running);
+                sleep(Duration::from_millis(100)).await;
+            }
+
+            if removed_running {
+                {
+                    let mut idempotency = chat_idempotency.lock().await;
+                    idempotency.remove(&workflow_id_owned);
+                }
+
+                let git_watcher_handle = {
+                    let mut watchers = git_watchers.lock().await;
+                    watchers.remove(&workflow_id_owned)
+                };
+
+                if let Some(handle) = git_watcher_handle {
+                    handle.watcher.stop();
+                    let mut watcher_task = handle.task_handle;
+                    let shutdown_result = timeout(Duration::from_secs(5), &mut watcher_task).await;
+                    match shutdown_result {
+                        Ok(_) => {}
+                        Err(_) => {
+                            watcher_task.abort();
+                            watcher_task.await.ok();
+                        }
+                    }
+                }
+            }
+        });
+
+        // Register in running workflows map
+        let mut running = self.running_workflows.lock().await;
+        running.insert(
+            workflow_id.to_string(),
+            RunningWorkflow { agent, task_handle },
+        );
+        drop(running);
+
+        // Start GitWatcher (non-blocking, failure is not fatal)
+        match self.try_start_git_watcher(workflow_id, &workflow).await {
+            Ok(Some(handle)) => {
+                let mut watchers = self.git_watchers.lock().await;
+                watchers.insert(workflow_id.to_string(), handle);
+            }
+            Ok(None) => {
+                debug!(
+                    "GitWatcher not started for recovered workflow {} (no valid repo)",
+                    workflow_id
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to start GitWatcher for recovered workflow {}: {}",
+                    workflow_id, e
+                );
+            }
+        }
+
+        Ok(true)
     }
 
     /// Recover incomplete orchestrator commands that were interrupted during restart.

@@ -6,6 +6,7 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 
 use super::{
     constants::WORKFLOW_TOPIC_PREFIX,
+    resilient_llm::ProviderEvent,
     types::{
         OrchestratorInstruction, PromptDecision, TerminalCompletionEvent, TerminalPromptEvent,
     },
@@ -63,6 +64,11 @@ pub enum BusMessage {
         terminal_id: String,
         workflow_id: String,
         decision: PromptDecision,
+    },
+    /// Provider state changed (switched, exhausted, recovered)
+    ProviderStateChanged {
+        workflow_id: String,
+        event: ProviderEvent,
     },
     Shutdown,
 }

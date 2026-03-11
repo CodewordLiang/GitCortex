@@ -1,0 +1,17 @@
+[package]
+name = "feishu-connector"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { workspace = true }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+bytes = "1.0"
+flate2 = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+futures-util = "0.3"

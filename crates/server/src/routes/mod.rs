@@ -15,6 +15,7 @@ pub mod filesystem;
 // pub mod github;
 pub mod event_bridge;
 pub mod events;
+pub mod feishu;
 pub mod execution_processes;
 pub mod frontend;
 pub mod git;
@@ -25,6 +26,7 @@ pub mod oauth;
 pub mod organizations;
 pub mod planning_drafts;
 pub mod projects;
+pub mod provider_health;
 pub mod repo;
 pub mod scratch;
 pub mod sessions;
@@ -62,6 +64,7 @@ pub fn router(deployment: DeploymentImpl, hub: SharedSubscriptionHub) -> IntoMak
         .merge(git::router())
         .merge(approvals::router())
         .nest("/integrations", chat_integrations::router())
+        .nest("/integrations", feishu::router())
         .merge(scratch::router(&deployment))
         .merge(sessions::router(&deployment))
         .nest("/images", images::routes())
@@ -70,6 +73,7 @@ pub fn router(deployment: DeploymentImpl, hub: SharedSubscriptionHub) -> IntoMak
         .nest("/planning-drafts", planning_drafts::planning_draft_routes())
         .nest("/workflows", workflows::workflows_routes())
         .nest("/workflows", slash_commands::slash_commands_routes())
+        .nest("/workflows", provider_health::provider_health_routes())
         .nest("/terminal", terminal_ws::terminal_ws_routes())
         .nest("/terminals", terminals::terminal_routes())
         // WebSocket routes for workflow events (requires Extension layer for hub)

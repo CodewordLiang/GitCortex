@@ -13,6 +13,7 @@ utils = { path = "../utils" }
 executors = { path = "../executors" }
 db = { path = "../db" }
 cc-switch = { path = "../cc-switch" }
+feishu-connector = { path = "../feishu-connector" }
 tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["io"] }
 axum = { workspace = true }

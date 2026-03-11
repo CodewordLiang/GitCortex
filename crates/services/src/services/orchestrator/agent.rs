@@ -180,6 +180,19 @@ impl OrchestratorAgent {
         self.persistence = Some(persistence);
     }
 
+    /// Restore agent state from persisted data after crash recovery.
+    ///
+    /// Overwrites the in-memory orchestrator state with the recovered state so
+    /// that the agent event loop can resume where it left off.
+    pub async fn restore_state(&self, recovered: OrchestratorState) {
+        let mut state = self.state.write().await;
+        state.task_states = recovered.task_states;
+        state.workflow_planning_complete = recovered.workflow_planning_complete;
+        state.conversation_history = recovered.conversation_history;
+        state.total_tokens_used = recovered.total_tokens_used;
+        state.error_count = recovered.error_count;
+    }
+
     /// Debounced state persistence - saves at most once every STATE_SAVE_DEBOUNCE_SECS seconds.
     /// Failures are logged but do not block the main flow.
     async fn maybe_save_state(&self) {
@@ -2041,10 +2054,200 @@ impl OrchestratorAgent {
             .publish_workflow_event(&workflow_id, event)
             .await?;
 
-        // 3. Awaken orchestrator to process the event
+        // 3. Auto-create a fix terminal from the review issues
+        if !issues.is_empty() {
+            let fix_instruction = OrchestratorInstruction::FixIssues {
+                terminal_id: reviewed_terminal_id.to_string(),
+                issues: issues.iter().map(|i| i.message.clone()).collect(),
+            };
+            self.execute_single_instruction(fix_instruction).await?;
+        }
+
+        // 4. Awaken orchestrator to process the event
         self.awaken().await;
 
         Ok(())
+    }
+
+    /// Heuristic check if a terminal failure is due to provider issues (not code errors).
+    fn is_provider_failure(error_message: &str) -> bool {
+        let keywords = [
+            "api_error",
+            "rate_limit",
+            "timeout",
+            "connection_refused",
+            "service_unavailable",
+            "provider_error",
+            "authentication_failed",
+            "429",
+            "503",
+            "502",
+        ];
+        let lower = error_message.to_lowercase();
+        keywords.iter().any(|k| lower.contains(k))
+    }
+
+    /// Find an alternative CLI/model config different from the failed one.
+    ///
+    /// Queries all `ModelConfig` entries and returns the first one whose
+    /// `cli_type_id` differs from `failed_cli_type_id`.
+    async fn find_alternative_cli_config(
+        &self,
+        failed_cli_type_id: &str,
+    ) -> anyhow::Result<Option<db::models::ModelConfig>> {
+        let all_configs = db::models::ModelConfig::find_all(&self.db.pool).await?;
+        Ok(all_configs
+            .into_iter()
+            .find(|c| c.cli_type_id != failed_cli_type_id))
+    }
+
+    /// Attempt provider failover when a terminal fails due to provider issues.
+    ///
+    /// Creates a replacement terminal using an alternative CLI/model config,
+    /// starts it, and dispatches it with context from the failed terminal.
+    /// Returns `Ok(true)` when a replacement was successfully dispatched,
+    /// `Ok(false)` when no alternative config is available, or `Err` on failure.
+    async fn handle_terminal_provider_failure(
+        &self,
+        failed_terminal_id: &str,
+        task_id: &str,
+        _error_message: &str,
+    ) -> anyhow::Result<bool> {
+        // 1. Look up the failed terminal
+        let failed_terminal =
+            db::models::Terminal::find_by_id(&self.db.pool, failed_terminal_id)
+                .await?
+                .ok_or_else(|| anyhow!("Terminal not found: {}", failed_terminal_id))?;
+
+        // 2. Find an alternative CLI config
+        let alt_config = match self
+            .find_alternative_cli_config(&failed_terminal.cli_type_id)
+            .await?
+        {
+            Some(config) => config,
+            None => {
+                let workflow_id = self.state.read().await.workflow_id.clone();
+                let _ = self
+                    .message_bus
+                    .publish_workflow_event(
+                        &workflow_id,
+                        BusMessage::Error {
+                            workflow_id: workflow_id.clone(),
+                            error: format!(
+                                "Provider failover: no alternative CLI config available for terminal {}",
+                                failed_terminal_id
+                            ),
+                        },
+                    )
+                    .await;
+                return Ok(false);
+            }
+        };
+
+        tracing::info!(
+            failed_terminal = failed_terminal_id,
+            task_id,
+            failed_cli = %failed_terminal.cli_type_id,
+            new_cli = %alt_config.cli_type_id,
+            new_model = %alt_config.id,
+            "Terminal provider failover: creating replacement terminal"
+        );
+
+        // 3. Mark the failed terminal as failed
+        db::models::Terminal::update_status(
+            &self.db.pool,
+            failed_terminal_id,
+            TERMINAL_STATUS_FAILED,
+        )
+        .await?;
+
+        let workflow_id = self.state.read().await.workflow_id.clone();
+
+        // 4. Create a replacement terminal via runtime_actions
+        let failover_name = format!(
+            "failover-{}",
+            failed_terminal
+                .role
+                .as_deref()
+                .unwrap_or(&failed_terminal.id)
+        );
+        let replacement = self
+            .runtime_actions()?
+            .create_terminal(
+                &workflow_id,
+                RuntimeTerminalSpec {
+                    terminal_id: None,
+                    task_id: task_id.to_string(),
+                    cli_type_id: alt_config.cli_type_id.clone(),
+                    model_config_id: alt_config.id.clone(),
+                    custom_base_url: failed_terminal.custom_base_url.clone(),
+                    custom_api_key: None,
+                    role: Some(failover_name),
+                    role_description: failed_terminal.role_description.clone(),
+                    order_index: None,
+                    auto_confirm: Some(failed_terminal.auto_confirm),
+                },
+            )
+            .await?;
+
+        // 5. Sync task state so the orchestrator knows about the new terminal
+        self.sync_task_state_from_db(task_id, None).await?;
+
+        // 6. Start the replacement terminal (spawns PTY)
+        let started_terminal = self
+            .runtime_actions()?
+            .start_terminal(&replacement.id)
+            .await?;
+
+        // 7. Build dispatch instruction with context from the failed terminal
+        let task = db::models::WorkflowTask::find_by_id(&self.db.pool, task_id)
+            .await?
+            .ok_or_else(|| anyhow!("Task not found: {}", task_id))?;
+
+        let terminals = db::models::Terminal::find_by_task(&self.db.pool, task_id).await?;
+
+        let prev_context = fetch_previous_terminal_context(
+            &self.db,
+            task_id,
+            started_terminal.order_index,
+        )
+        .await
+        .unwrap_or(None);
+
+        let instruction = Self::build_task_instruction(
+            &workflow_id,
+            &task,
+            &started_terminal,
+            terminals.len(),
+            prev_context.as_ref(),
+        );
+
+        // 8. Dispatch the replacement terminal
+        self.dispatch_terminal(task_id, &started_terminal, &instruction)
+            .await?;
+
+        // 9. Publish failover event for frontend visibility
+        let _ = self
+            .message_bus
+            .publish_workflow_event(
+                &workflow_id,
+                BusMessage::TerminalStatusUpdate {
+                    workflow_id: workflow_id.clone(),
+                    terminal_id: replacement.id.clone(),
+                    status: "working".to_string(),
+                },
+            )
+            .await;
+
+        tracing::info!(
+            failed_terminal = failed_terminal_id,
+            replacement_terminal = %replacement.id,
+            task_id,
+            new_cli = %alt_config.cli_type_id,
+            "Provider failover complete: replacement terminal dispatched"
+        );
+
+        Ok(true)
     }
 
     /// Handle terminal failed status from git event
@@ -2053,6 +2256,9 @@ impl OrchestratorAgent {
     /// workflow status, activates an error terminal (when configured), and
     /// broadcasts the failure event.  Falls back to basic status update if
     /// the error handler itself errors.
+    ///
+    /// When the failure is a provider issue and failover succeeds (replacement
+    /// terminal dispatched), the normal error-handler flow is skipped.
     async fn handle_git_terminal_failed(
         &self,
         terminal_id: &str,
@@ -2064,6 +2270,40 @@ impl OrchestratorAgent {
             task_id,
             "Terminal reported failure via git commit"
         );
+
+        // 0. Check for provider failure and attempt failover
+        if Self::is_provider_failure(error_message) {
+            match self
+                .handle_terminal_provider_failure(terminal_id, task_id, error_message)
+                .await
+            {
+                Ok(true) => {
+                    // Replacement terminal dispatched successfully; skip normal
+                    // error handling since the failed terminal is already marked
+                    // failed inside handle_terminal_provider_failure.
+                    tracing::info!(
+                        terminal_id,
+                        task_id,
+                        "Provider failover succeeded, skipping normal error handler"
+                    );
+                    self.awaken().await;
+                    return Ok(());
+                }
+                Ok(false) => {
+                    tracing::warn!(
+                        terminal_id,
+                        task_id,
+                        "No alternative CLI config for failover, falling through to normal error handling"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Provider failover failed, continuing with normal error handling"
+                    );
+                }
+            }
+        }
 
         // 1. Update terminal status to failed
         db::models::Terminal::update_status(&self.db.pool, terminal_id, TERMINAL_STATUS_FAILED)
@@ -2274,6 +2514,9 @@ impl OrchestratorAgent {
         drop(state);
 
         let response = self.llm_client.chat(messages).await?;
+
+        // Publish any provider state-change events that occurred during the call.
+        self.publish_provider_events().await;
 
         let mut state = self.state.write().await;
         state.add_message("assistant", &response.content, &self.config);
@@ -2714,7 +2957,7 @@ impl OrchestratorAgent {
                     terminal_id = %terminal_id,
                     task_id = %task_id,
                     commit_hash = %commit_hash,
-                    "ReviewCode requested for terminal commit"
+                    "ReviewCode: creating reviewer terminal"
                 );
 
                 let workflow_id = {
@@ -2722,17 +2965,67 @@ impl OrchestratorAgent {
                     state.workflow_id.clone()
                 };
 
-                self.message_bus
-                    .publish_workflow_event(
+                // 1. Fetch diff context for the review
+                let diff_context = self.fetch_diff_for_review(&commit_hash).await
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("Failed to fetch diff for review: {e}");
+                        "(diff unavailable)".to_string()
+                    });
+
+                // 2. Create a reviewer terminal reusing the same CLI/model config
+                let reviewer_terminal = self
+                    .runtime_actions()?
+                    .create_terminal(
                         &workflow_id,
-                        BusMessage::TerminalStatusUpdate {
-                            workflow_id: workflow_id.clone(),
-                            terminal_id: terminal_id.clone(),
-                            status: "review_requested".to_string(),
+                        RuntimeTerminalSpec {
+                            terminal_id: None,
+                            task_id: task_id.clone(),
+                            cli_type_id: terminal.cli_type_id.clone(),
+                            model_config_id: terminal.model_config_id.clone(),
+                            custom_base_url: terminal.custom_base_url.clone(),
+                            custom_api_key: None,
+                            role: Some("reviewer".to_string()),
+                            role_description: Some(format!(
+                                "Code reviewer for terminal {}",
+                                terminal_id
+                            )),
+                            order_index: None,
+                            auto_confirm: Some(true),
                         },
                     )
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to publish review event: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("Failed to create reviewer terminal: {e}"))?;
+
+                // 3. Start the reviewer terminal (launches PTY)
+                let reviewer_terminal = self
+                    .runtime_actions()?
+                    .start_terminal(&reviewer_terminal.id)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to start reviewer terminal: {e}"))?;
+
+                // 4. Sync task state with the new terminal
+                let planning_complete = self.task_planning_complete(&task_id).await;
+                self.sync_task_state_from_db(&task_id, Some(planning_complete))
+                    .await?;
+
+                // 5. Build review instruction and dispatch
+                let review_instruction = format!(
+                    "Review the code changes from commit {commit_hash} on terminal {terminal_id}.\n\
+                     \n\
+                     Diff summary:\n{diff_context}\n\
+                     \n\
+                     If the code is correct, commit with metadata status: review_pass and reviewed_terminal: {terminal_id}.\n\
+                     If there are issues, commit with metadata status: review_reject, reviewed_terminal: {terminal_id}, and list issues."
+                );
+
+                self.dispatch_terminal(&task_id, &reviewer_terminal, &review_instruction)
+                    .await?;
+
+                tracing::info!(
+                    reviewer_id = %reviewer_terminal.id,
+                    reviewed_id = %terminal_id,
+                    "ReviewCode: reviewer terminal dispatched"
+                );
             }
             OrchestratorInstruction::FixIssues {
                 terminal_id,
@@ -2748,7 +3041,7 @@ impl OrchestratorAgent {
                     terminal_id = %terminal_id,
                     task_id = %task_id,
                     issue_count = issues.len(),
-                    "FixIssues requested for terminal"
+                    "FixIssues: creating fixer terminal"
                 );
 
                 let workflow_id = {
@@ -2756,17 +3049,66 @@ impl OrchestratorAgent {
                     state.workflow_id.clone()
                 };
 
-                self.message_bus
-                    .publish_workflow_event(
+                // 1. Create a fixer terminal reusing the same CLI/model config
+                let fixer_terminal = self
+                    .runtime_actions()?
+                    .create_terminal(
                         &workflow_id,
-                        BusMessage::TerminalStatusUpdate {
-                            workflow_id: workflow_id.clone(),
-                            terminal_id: terminal_id.clone(),
-                            status: "fix_requested".to_string(),
+                        RuntimeTerminalSpec {
+                            terminal_id: None,
+                            task_id: task_id.clone(),
+                            cli_type_id: terminal.cli_type_id.clone(),
+                            model_config_id: terminal.model_config_id.clone(),
+                            custom_base_url: terminal.custom_base_url.clone(),
+                            custom_api_key: None,
+                            role: Some("fixer".to_string()),
+                            role_description: Some(format!(
+                                "Issue fixer for terminal {}",
+                                terminal_id
+                            )),
+                            order_index: None,
+                            auto_confirm: Some(true),
                         },
                     )
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to publish fix event: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("Failed to create fixer terminal: {e}"))?;
+
+                // 2. Start the fixer terminal (launches PTY)
+                let fixer_terminal = self
+                    .runtime_actions()?
+                    .start_terminal(&fixer_terminal.id)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to start fixer terminal: {e}"))?;
+
+                // 3. Sync task state with the new terminal
+                let planning_complete = self.task_planning_complete(&task_id).await;
+                self.sync_task_state_from_db(&task_id, Some(planning_complete))
+                    .await?;
+
+                // 4. Build fix instruction with numbered issues and dispatch
+                let numbered_issues: String = issues
+                    .iter()
+                    .enumerate()
+                    .map(|(i, issue)| format!("{}. {}", i + 1, issue))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let fix_instruction = format!(
+                    "Fix the following issues found during code review of terminal {terminal_id}:\n\
+                     \n\
+                     {numbered_issues}\n\
+                     \n\
+                     After fixing all issues, commit with metadata status: completed."
+                );
+
+                self.dispatch_terminal(&task_id, &fixer_terminal, &fix_instruction)
+                    .await?;
+
+                tracing::info!(
+                    fixer_id = %fixer_terminal.id,
+                    source_id = %terminal_id,
+                    "FixIssues: fixer terminal dispatched"
+                );
             }
             OrchestratorInstruction::MergeBranch {
                 source_branch,
@@ -3377,6 +3719,37 @@ impl OrchestratorAgent {
         Ok(())
     }
 
+    /// Publish any provider state-change events collected during the last LLM call.
+    async fn publish_provider_events(&self) {
+        let events = self.llm_client.take_provider_events().await;
+        if events.is_empty() {
+            return;
+        }
+
+        let workflow_id = {
+            let state = self.state.read().await;
+            state.workflow_id.clone()
+        };
+
+        for event in events {
+            let message = BusMessage::ProviderStateChanged {
+                workflow_id: workflow_id.clone(),
+                event,
+            };
+            if let Err(e) = self
+                .message_bus
+                .publish_workflow_event(&workflow_id, message)
+                .await
+            {
+                tracing::warn!(
+                    "Failed to publish provider state change event for workflow {}: {}",
+                    workflow_id,
+                    e,
+                );
+            }
+        }
+    }
+
     /// Broadcast workflow status update
     ///
     /// Updates the workflow status in the database and broadcasts
@@ -3860,6 +4233,16 @@ impl OrchestratorAgent {
         state.conversation_history.clone()
     }
 
+    /// Returns live provider status from the underlying LLM client.
+    pub async fn get_provider_status(&self) -> Vec<super::resilient_llm::ProviderStatusReport> {
+        self.llm_client.provider_status().await
+    }
+
+    /// Reset a provider's circuit breaker by name.
+    pub async fn reset_provider(&self, provider_name: &str) -> bool {
+        self.llm_client.reset_provider(provider_name).await
+    }
+
     /// Execute slash commands for this workflow
     ///
     /// Loads all slash commands associated with the workflow, renders their
@@ -3974,6 +4357,26 @@ impl OrchestratorAgent {
 
         tracing::info!("All slash commands executed for workflow {}", workflow_id);
         Ok(())
+    }
+
+    /// Fetches a truncated diff summary for a given commit hash.
+    async fn fetch_diff_for_review(&self, commit_hash: &str) -> anyhow::Result<String> {
+        let working_dir = self.resolve_project_working_dir().await?;
+        let output = tokio::process::Command::new("git")
+            .args([
+                "diff",
+                &format!("{}~1..{}", commit_hash, commit_hash),
+                "--stat",
+            ])
+            .current_dir(&working_dir)
+            .output()
+            .await?;
+        let diff = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(if diff.len() > 2000 {
+            diff[..2000].to_string() + "\n[...truncated]"
+        } else {
+            diff
+        })
     }
 }
 

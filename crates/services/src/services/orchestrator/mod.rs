@@ -23,7 +23,7 @@ pub use llm::MockLLMClient;
 pub use llm::{
     LLMClient, OpenAICompatibleClient, build_terminal_completion_prompt, create_llm_client,
 };
-pub use resilient_llm::{ProviderStatusReport, ResilientLLMClient};
+pub use resilient_llm::{ProviderEvent, ProviderStatusReport, ResilientLLMClient};
 pub use message_bus::{BusMessage, MessageBus, SharedMessageBus};
 pub use prompt_handler::PromptHandler;
 pub use runtime::{OrchestratorRuntime, RuntimeConfig};

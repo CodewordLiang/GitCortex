@@ -28,5 +28,7 @@ pub mod terminal;
 pub mod workspace_manager;
 pub mod worktree_manager;
 pub use cc_switch::{CCSwitch, CCSwitchService};
+pub mod chat_connector;
+pub mod feishu;
 pub mod merge_coordinator;
 pub mod orchestrator;

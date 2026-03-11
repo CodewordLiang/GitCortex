@@ -9,7 +9,8 @@ members = [
     "crates/local-deployment",
     "crates/deployment",
     "crates/review",
-    "crates/cc-switch"
+    "crates/cc-switch",
+    "crates/feishu-connector"
 ]
 
 [workspace.dependencies]

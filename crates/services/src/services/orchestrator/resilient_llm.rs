@@ -58,6 +58,25 @@ pub struct ProviderStatusReport {
     pub total_failures: u64,
 }
 
+/// Event emitted when provider state changes during a `chat` call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProviderEvent {
+    /// Active provider switched to a different one after failure.
+    Switched {
+        from_provider: String,
+        to_provider: String,
+    },
+    /// All providers have been exhausted (all dead or failed).
+    Exhausted {
+        provider_count: usize,
+    },
+    /// A previously dead provider recovered via successful probe.
+    Recovered {
+        provider_name: String,
+    },
+}
+
 /// An LLM client that wraps multiple providers with automatic circuit-breaking
 /// and round-robin failover.
 ///
@@ -70,6 +89,8 @@ pub struct ProviderStatusReport {
 pub struct ResilientLLMClient {
     providers: Vec<ProviderEntry>,
     active_index: AtomicUsize,
+    /// Events collected during the last `chat` call.
+    last_events: RwLock<Vec<ProviderEvent>>,
 }
 
 impl ResilientLLMClient {
@@ -92,6 +113,7 @@ impl ResilientLLMClient {
         Self {
             providers: entries,
             active_index: AtomicUsize::new(0),
+            last_events: RwLock::new(Vec::new()),
         }
     }
 
@@ -99,6 +121,31 @@ impl ResilientLLMClient {
     pub fn active_provider_name(&self) -> String {
         let idx = self.active_index.load(Ordering::Relaxed);
         self.providers[idx].name.clone()
+    }
+
+    /// Reset the circuit breaker for a provider by name.
+    ///
+    /// Returns `true` if the provider was found and reset, `false` otherwise.
+    pub async fn reset_provider(&self, provider_name: &str) -> bool {
+        for entry in &self.providers {
+            if entry.name == provider_name {
+                let mut state = entry.state.write().await;
+                state.consecutive_failures = 0;
+                state.is_dead = false;
+                tracing::info!(
+                    "ResilientLLMClient: circuit breaker reset for provider '{}'",
+                    provider_name,
+                );
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Take and drain events collected during the last `chat` call.
+    pub async fn take_last_events(&self) -> Vec<ProviderEvent> {
+        let mut events = self.last_events.write().await;
+        std::mem::take(&mut *events)
     }
 
     /// Returns a status snapshot for every registered provider.
@@ -166,6 +213,11 @@ impl ResilientLLMClient {
                 self.providers[idx].name,
             );
             state.is_dead = false;
+            // Record recovery event
+            let mut events = self.last_events.write().await;
+            events.push(ProviderEvent::Recovered {
+                provider_name: self.providers[idx].name.clone(),
+            });
         }
     }
 
@@ -194,6 +246,12 @@ impl ResilientLLMClient {
 #[async_trait]
 impl LLMClient for ResilientLLMClient {
     async fn chat(&self, messages: Vec<LLMMessage>) -> anyhow::Result<LLMResponse> {
+        // Clear events from previous call.
+        {
+            let mut events = self.last_events.write().await;
+            events.clear();
+        }
+
         let provider_count = self.providers.len();
         let start_index = self.active_index.load(Ordering::Relaxed);
 
@@ -251,17 +309,43 @@ impl LLMClient for ResilientLLMClient {
                     );
                     let just_died = self.record_failure(idx).await;
                     if just_died && offset + 1 < provider_count {
+                        let next_idx = (idx + 1) % provider_count;
                         self.switch_to_next(idx);
+                        // Record switch event
+                        let mut events = self.last_events.write().await;
+                        events.push(ProviderEvent::Switched {
+                            from_provider: self.providers[idx].name.clone(),
+                            to_provider: self.providers[next_idx].name.clone(),
+                        });
                     }
                     // Continue to next provider.
                 }
             }
         }
 
+        // Record exhausted event
+        {
+            let mut events = self.last_events.write().await;
+            events.push(ProviderEvent::Exhausted { provider_count });
+        }
+
         Err(anyhow::anyhow!(
             "All LLM providers exhausted ({} providers tried)",
             provider_count,
         ))
+    }
+
+    async fn provider_status(&self) -> Vec<ProviderStatusReport> {
+        // Delegate to the inherent method.
+        ResilientLLMClient::provider_status(self).await
+    }
+
+    async fn reset_provider(&self, provider_name: &str) -> bool {
+        ResilientLLMClient::reset_provider(self, provider_name).await
+    }
+
+    async fn take_provider_events(&self) -> Vec<ProviderEvent> {
+        self.take_last_events().await
     }
 }
 
@@ -314,19 +398,21 @@ mod tests {
 
     #[tokio::test]
     async fn circuit_breaker_marks_provider_dead() {
+        // Use two failing providers so the primary accumulates failures
+        // without a healthy fallback stealing the active index.
         let client = ResilientLLMClient::new(vec![
             ("primary".into(), Box::new(MockLLMClient::that_fails())),
-            ("fallback".into(), Box::new(MockLLMClient::new())),
+            ("fallback".into(), Box::new(MockLLMClient::that_fails())),
         ]);
 
-        // Trigger CIRCUIT_BREAKER_THRESHOLD failures on primary
+        // Each chat() call fails both providers (2 failures each round).
+        // After enough rounds the primary hits the threshold.
         for _ in 0..CIRCUIT_BREAKER_THRESHOLD {
             let _ = client.chat(msg()).await;
         }
 
         let status = client.provider_status().await;
         assert!(status[0].is_dead, "primary should be dead after threshold failures");
-        assert!(!status[1].is_dead, "fallback should still be alive");
     }
 
     #[tokio::test]

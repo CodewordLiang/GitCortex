@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use services::services::orchestrator::{
-    BusMessage,
+    BusMessage, ProviderEvent,
     types::{PromptDecision, PromptKind, TerminalCompletionStatus},
 };
 use ts_rs::TS;
@@ -69,6 +69,18 @@ pub enum WsEventType {
     /// Terminal prompt decision made by Orchestrator
     #[serde(rename = "terminal.prompt_decision")]
     TerminalPromptDecision,
+
+    /// Provider switched to a different one after failure
+    #[serde(rename = "provider.switched")]
+    ProviderSwitched,
+
+    /// All providers exhausted (all dead or failed)
+    #[serde(rename = "provider.exhausted")]
+    ProviderExhausted,
+
+    /// A previously dead provider recovered via probe
+    #[serde(rename = "provider.recovered")]
+    ProviderRecovered,
 }
 
 // ============================================================================
@@ -391,6 +403,48 @@ impl WsEvent {
             BusMessage::TerminalMessage { .. } => None,
             BusMessage::TerminalInput { .. } => None, // Internal message, not for WebSocket
             BusMessage::Shutdown => None,
+
+            // Provider state change events
+            BusMessage::ProviderStateChanged {
+                workflow_id,
+                event,
+            } => {
+                let (event_type, payload) = match &event {
+                    ProviderEvent::Switched {
+                        from_provider,
+                        to_provider,
+                    } => (
+                        WsEventType::ProviderSwitched,
+                        json!({
+                            "workflowId": workflow_id,
+                            "fromProvider": from_provider,
+                            "toProvider": to_provider,
+                            "workflow_id": workflow_id,
+                            "from_provider": from_provider,
+                            "to_provider": to_provider
+                        }),
+                    ),
+                    ProviderEvent::Exhausted { provider_count } => (
+                        WsEventType::ProviderExhausted,
+                        json!({
+                            "workflowId": workflow_id,
+                            "providerCount": provider_count,
+                            "workflow_id": workflow_id,
+                            "provider_count": provider_count
+                        }),
+                    ),
+                    ProviderEvent::Recovered { provider_name } => (
+                        WsEventType::ProviderRecovered,
+                        json!({
+                            "workflowId": workflow_id,
+                            "providerName": provider_name,
+                            "workflow_id": workflow_id,
+                            "provider_name": provider_name
+                        }),
+                    ),
+                };
+                Some((workflow_id, Self::new(event_type, payload)))
+            }
         }
     }
 }

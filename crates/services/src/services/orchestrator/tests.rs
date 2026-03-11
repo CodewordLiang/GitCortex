@@ -2225,6 +2225,8 @@ mod orchestrator_tests {
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -2314,6 +2316,8 @@ next_action: handoff"#,
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -2397,6 +2401,8 @@ next_action: handoff"#,
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -2496,6 +2502,8 @@ next_action: handoff"#,
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -2569,6 +2577,8 @@ next_action: handoff"#,
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -2653,6 +2663,8 @@ next_action: handoff"#,
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -2735,6 +2747,8 @@ next_action: handoff"#,
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -2807,6 +2821,8 @@ reviewed_terminal: {}"#,
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -3011,6 +3027,8 @@ next_action: handoff"#;
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -3097,6 +3115,8 @@ next_action: handoff"#,
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -3240,6 +3260,8 @@ next_action: handoff"#,
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));
@@ -3350,6 +3372,8 @@ next_action: handoff"#,
             rate_limit_requests_per_second: DEFAULT_LLM_RATE_LIMIT_PER_SECOND,
             max_conversation_history: 50,
             system_prompt: String::new(),
+            auto_merge_on_completion: true,
+            fallback_providers: Vec::new(),
         };
 
         let message_bus = Arc::new(MessageBus::new(100));

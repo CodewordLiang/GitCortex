@@ -133,6 +133,16 @@ async fn main() -> Result<(), GitCortexError> {
     let _event_bridge_handle = event_bridge.spawn();
     tracing::info!("WebSocket event bridge started");
 
+    // Conditional Feishu connector startup
+    if is_feishu_enabled() {
+        match start_feishu_connector(&deployment).await {
+            Ok(()) => tracing::info!("Feishu connector started"),
+            Err(e) => tracing::warn!("Feishu connector startup skipped: {e}"),
+        }
+    } else {
+        tracing::debug!("Feishu integration disabled (GITCORTEX_FEISHU_ENABLED not set)");
+    }
+
     let app_router = routes::router(deployment.clone(), subscription_hub);
 
     let port = std::env::var("BACKEND_PORT")
@@ -230,4 +240,51 @@ pub async fn perform_cleanup_actions(deployment: &DeploymentImpl) {
         .kill_all_running_processes()
         .await
         .expect("Failed to cleanly kill running execution processes");
+}
+
+/// Check whether the Feishu integration feature flag is enabled.
+fn is_feishu_enabled() -> bool {
+    std::env::var("GITCORTEX_FEISHU_ENABLED")
+        .ok()
+        .map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
+        .unwrap_or(false)
+}
+
+/// Attempt to start the Feishu connector by loading config from the database.
+///
+/// If no enabled config exists, this returns an informational error without
+/// crashing the server. Once `FeishuService` is fully implemented by another
+/// agent, this function should create the service, start the WebSocket
+/// connection, and store the handle in `AppState` for route access.
+async fn start_feishu_connector(deployment: &DeploymentImpl) -> Result<(), AnyhowError> {
+    use db::models::feishu_config::FeishuAppConfig;
+    use deployment::Deployment;
+
+    let config = FeishuAppConfig::find_enabled(&deployment.db().pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to query feishu_app_config: {e}"))?;
+
+    let Some(config) = config else {
+        return Err(anyhow::anyhow!(
+            "No enabled Feishu config found in database; skipping connector startup"
+        ));
+    };
+
+    tracing::info!(
+        app_id = %config.app_id,
+        base_url = %config.base_url,
+        "Feishu config loaded from database"
+    );
+
+    // TODO: Wire up FeishuService once it is available:
+    //
+    // 1. Decrypt config.app_secret_encrypted using GITCORTEX_ENCRYPTION_KEY
+    // 2. Create FeishuConfig { app_id, app_secret, base_url }
+    // 3. Create FeishuClient::new(feishu_config)
+    // 4. Spawn the client.connect() loop with reconnect policy
+    // 5. Store the FeishuService handle in AppState for route access
+    //
+    // For now, the connector is acknowledged but not connected.
+
+    Ok(())
 }

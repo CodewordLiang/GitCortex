@@ -14,6 +14,7 @@ use tokio::time::sleep;
 
 use super::{
     config::OrchestratorConfig,
+    resilient_llm::{ProviderEvent, ProviderStatusReport},
     types::{LLMMessage, LLMResponse, LLMUsage},
 };
 
@@ -21,6 +22,21 @@ use super::{
 #[async_trait]
 pub trait LLMClient: Send + Sync {
     async fn chat(&self, messages: Vec<LLMMessage>) -> anyhow::Result<LLMResponse>;
+
+    /// Returns provider status reports. Default returns empty (single-provider clients).
+    async fn provider_status(&self) -> Vec<ProviderStatusReport> {
+        Vec::new()
+    }
+
+    /// Reset a provider's circuit breaker by name. Default returns false.
+    async fn reset_provider(&self, _provider_name: &str) -> bool {
+        false
+    }
+
+    /// Take provider events collected during the last chat call. Default returns empty.
+    async fn take_provider_events(&self) -> Vec<ProviderEvent> {
+        Vec::new()
+    }
 }
 
 /// Retries an async operation with exponential backoff.
