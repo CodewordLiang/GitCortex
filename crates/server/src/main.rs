@@ -221,8 +221,8 @@ pub async fn shutdown_signal() {
         };
 
         tokio::select! {
-            _ = ctrl_c => {},
-            _ = terminate => {},
+            () = ctrl_c => {},
+            () = terminate => {},
         }
     }
 
