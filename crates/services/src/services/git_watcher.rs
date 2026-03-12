@@ -741,7 +741,7 @@ next_action: continue"#;
     }
 
     #[test]
-    fn test_completion_status_completed_continue_does_not_advance() {
+    fn test_completion_status_completed_continue_returns_checkpoint() {
         let metadata = CommitMetadata {
             workflow_id: "wf-1".to_string(),
             task_id: "task-1".to_string(),
@@ -757,7 +757,7 @@ next_action: continue"#;
         };
 
         let status = GitWatcher::completion_status_from_metadata(&metadata);
-        assert!(status.is_none());
+        assert!(matches!(status, Some(TerminalCompletionStatus::Checkpoint)));
     }
 
     #[test]
