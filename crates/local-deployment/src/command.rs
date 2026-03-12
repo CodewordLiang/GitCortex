@@ -13,6 +13,7 @@ pub async fn kill_process_group(child: &mut AsyncGroupChild) -> Result<(), Conta
     #[cfg(unix)]
     {
         if let Some(pid) = child.inner().id() {
+            #[allow(clippy::cast_possible_wrap)]
             let pgid = getpgid(Some(Pid::from_raw(pid as i32)))
                 .map_err(|e| ContainerError::KillFailed(std::io::Error::other(e)))?;
 
