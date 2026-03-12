@@ -173,6 +173,8 @@ async fn get_fresh_path() -> Option<String> {
     use tokio::process::Command;
 
     async fn run(shell: &UnixShell) -> Option<String> {
+        const PATH_REFRESH_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+
         let mut cmd = Command::new(shell.path());
         if shell.login() {
             cmd.arg("-l");
@@ -187,8 +189,6 @@ async fn get_fresh_path() -> Option<String> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-
-        const PATH_REFRESH_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
         let child = cmd.spawn().ok()?;
         let output = match tokio::time::timeout(
@@ -248,7 +248,6 @@ async fn get_fresh_path() -> Option<String> {
 
     paths
         .into_iter()
-        .map(OsString::from)
         .reduce(|a, b| merge_paths(&a, &b))
         .map(|merged| merged.to_string_lossy().into_owned())
 }
