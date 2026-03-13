@@ -164,6 +164,7 @@ function BranchSelector({
       const start = highlightedIndex ?? -1;
       let next = start;
 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for (const _ of filteredBranches) {
         next =
           (next + delta + filteredBranches.length) % filteredBranches.length;
