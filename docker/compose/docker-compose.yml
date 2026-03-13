@@ -26,13 +26,23 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      # Quality gate configuration
+      - QUALITY_GATE_MODE=${QUALITY_GATE_MODE:-shadow}
+      - SONAR_TOKEN=${SONAR_TOKEN:-}
+      - SONAR_HOST_URL=${SONAR_HOST_URL:-http://sonarqube:9000}
+      - SONAR_PROJECT_KEY=${SONAR_PROJECT_KEY:-gitcortex}
+    depends_on:
+      sonarqube:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:23456/readyz"]
+      test: ["CMD", "curl", "-f", "http://localhost:23456/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
     restart: unless-stopped
+    # Data retention: schedule cleanup-quality-data.sh via host cron:
+    #   0 3 * * 0 docker exec gitcortex /bin/bash /opt/gitcortex/scripts/cleanup-quality-data.sh
 
   sonarqube-db:
     image: postgres:15
@@ -47,6 +57,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   sonarqube:
     image: sonarqube:10.5-community
@@ -68,6 +79,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 60s
+    restart: unless-stopped
 
 volumes:
   gitcortex-data:

@@ -1142,6 +1142,12 @@ impl OrchestratorAgent {
     /// In "shadow"/"warn"/"enforce" modes, a quality gate run is created and
     /// the evaluation spawned asynchronously. The result arrives via
     /// `BusMessage::TerminalQualityGateResult`.
+    ///
+    /// Protections:
+    /// - Replay: skips if this terminal+commit was already processed in-memory.
+    /// - Dedup: skips if a quality_run already exists in DB for this terminal+commit.
+    /// - Out-of-order: skips if terminal is no longer in a valid state for checkpoints.
+    /// - Idempotent: skips if a quality run is already in progress for this terminal.
     async fn handle_checkpoint_quality_gate(
         &self,
         event: TerminalCompletionEvent,
@@ -1155,6 +1161,57 @@ impl OrchestratorAgent {
             mode = %mode,
             "Processing quality gate checkpoint"
         );
+
+        // --- Replay protection: check in-memory processed set ---
+        if let Some(ref hash) = event.commit_hash {
+            let checkpoint_key = format!("{}:{}", event.terminal_id, hash);
+            let state = self.state.read().await;
+            if state.processed_checkpoints.contains(&checkpoint_key) {
+                tracing::debug!(
+                    terminal_id = %event.terminal_id,
+                    commit_hash = %hash,
+                    "Checkpoint already processed in-memory, skipping (replay protection)"
+                );
+                return Ok(());
+            }
+        }
+
+        // --- Idempotent: skip if quality gate already in progress for this terminal ---
+        {
+            let state = self.state.read().await;
+            if state.pending_quality_checks.contains(&event.terminal_id) {
+                tracing::info!(
+                    terminal_id = %event.terminal_id,
+                    "Quality gate already in progress for this terminal, skipping"
+                );
+                return Ok(());
+            }
+        }
+
+        // --- Out-of-order protection: verify terminal is in a valid state ---
+        if let Ok(Some(terminal)) =
+            db::models::Terminal::find_by_id(&self.db.pool, &event.terminal_id).await
+        {
+            let valid_states = ["working", "quality_pending"];
+            if !valid_states.contains(&terminal.status.as_str()) {
+                tracing::warn!(
+                    terminal_id = %event.terminal_id,
+                    terminal_status = %terminal.status,
+                    "Terminal not in valid state for checkpoint, skipping (out-of-order protection)"
+                );
+                return Ok(());
+            }
+        }
+
+        // --- Dedup: check DB for existing quality_run for this terminal+commit ---
+        if self.is_checkpoint_duplicate(&event.terminal_id, event.commit_hash.as_deref()).await {
+            tracing::info!(
+                terminal_id = %event.terminal_id,
+                commit_hash = ?event.commit_hash,
+                "Duplicate checkpoint detected in DB, skipping"
+            );
+            return Ok(());
+        }
 
         // Off mode: skip quality gate entirely, treat as Completed
         if mode == QUALITY_GATE_MODE_OFF {
@@ -1170,12 +1227,17 @@ impl OrchestratorAgent {
             return Ok(());
         }
 
-        // Track that this terminal is pending quality gate
+        // Track that this terminal is pending quality gate + mark checkpoint processed
         {
             let mut state = self.state.write().await;
             state
                 .pending_quality_checks
                 .insert(event.terminal_id.clone());
+            if let Some(ref hash) = event.commit_hash {
+                state
+                    .processed_checkpoints
+                    .insert(format!("{}:{}", event.terminal_id, hash));
+            }
         }
 
         // Create a quality_run record
@@ -1346,6 +1408,40 @@ impl OrchestratorAgent {
         });
 
         Ok(())
+    }
+
+    /// Checks whether a checkpoint is a duplicate by querying the DB for an
+    /// existing quality_run with the same terminal_id + commit_hash.
+    ///
+    /// Returns `false` when there is no commit_hash (nothing to dedup against)
+    /// or when the DB query fails (fail-open to avoid blocking processing).
+    async fn is_checkpoint_duplicate(
+        &self,
+        terminal_id: &str,
+        commit_hash: Option<&str>,
+    ) -> bool {
+        let Some(hash) = commit_hash else {
+            return false;
+        };
+        match db::models::QualityRun::find_by_terminal_and_commit(
+            &self.db.pool,
+            terminal_id,
+            hash,
+        )
+        .await
+        {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(e) => {
+                tracing::warn!(
+                    terminal_id = %terminal_id,
+                    commit_hash = %hash,
+                    error = %e,
+                    "Failed to check checkpoint duplicate, proceeding (fail-open)"
+                );
+                false
+            }
+        }
     }
 
     /// Handles the result of a quality gate evaluation.

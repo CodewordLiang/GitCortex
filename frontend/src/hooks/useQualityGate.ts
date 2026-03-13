@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { handleApiResponse } from '@/lib/api';
+import { isQualityGateAvailable } from '@/lib/apiVersionCompat';
 import type {
   QualityRunSummary,
   QualityRunDetail,
@@ -21,6 +22,26 @@ export const qualityKeys = {
 };
 
 // ============================================================================
+// Version-tolerant fetch wrapper
+// ============================================================================
+
+/**
+ * Wraps a quality API call so that a 404 (endpoint missing on older backends)
+ * returns `fallback` instead of throwing, enabling graceful degradation.
+ */
+async function qualityFetchSafe<T>(
+  fn: () => Promise<T>,
+  fallback: T,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err: unknown) {
+    if (!isQualityGateAvailable(err)) return fallback;
+    throw err;
+  }
+}
+
+// ============================================================================
 // Quality API
 // ============================================================================
 
@@ -28,33 +49,41 @@ const qualityApi = {
   getRunsForWorkflow: async (
     workflowId: string
   ): Promise<QualityRunSummary[]> => {
-    const response = await fetch(
-      `/api/workflows/${encodeURIComponent(workflowId)}/quality/runs`
-    );
-    return handleApiResponse<QualityRunSummary[]>(response);
+    return qualityFetchSafe(async () => {
+      const response = await fetch(
+        `/api/workflows/${encodeURIComponent(workflowId)}/quality/runs`
+      );
+      return handleApiResponse<QualityRunSummary[]>(response);
+    }, []);
   },
 
   getRunDetail: async (runId: string): Promise<QualityRunDetail | null> => {
-    const response = await fetch(
-      `/api/quality/runs/${encodeURIComponent(runId)}`
-    );
-    return handleApiResponse<QualityRunDetail | null>(response);
+    return qualityFetchSafe(async () => {
+      const response = await fetch(
+        `/api/quality/runs/${encodeURIComponent(runId)}`
+      );
+      return handleApiResponse<QualityRunDetail | null>(response);
+    }, null);
   },
 
   getIssuesForRun: async (runId: string): Promise<QualityIssueRecord[]> => {
-    const response = await fetch(
-      `/api/quality/runs/${encodeURIComponent(runId)}/issues`
-    );
-    return handleApiResponse<QualityIssueRecord[]>(response);
+    return qualityFetchSafe(async () => {
+      const response = await fetch(
+        `/api/quality/runs/${encodeURIComponent(runId)}/issues`
+      );
+      return handleApiResponse<QualityIssueRecord[]>(response);
+    }, []);
   },
 
   getLatestForTerminal: async (
     terminalId: string
   ): Promise<QualityRunSummary | null> => {
-    const response = await fetch(
-      `/api/terminals/${encodeURIComponent(terminalId)}/quality/latest`
-    );
-    return handleApiResponse<QualityRunSummary | null>(response);
+    return qualityFetchSafe(async () => {
+      const response = await fetch(
+        `/api/terminals/${encodeURIComponent(terminalId)}/quality/latest`
+      );
+      return handleApiResponse<QualityRunSummary | null>(response);
+    }, null);
   },
 };
 

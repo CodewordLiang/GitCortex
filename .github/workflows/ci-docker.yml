@@ -1,3 +1,10 @@
+# ============================================================================
+# CI Workflow: Docker Build Check
+# Branches: main, phase-18-release-readiness
+# Triggers: push to branch, pull_request targeting branch
+# Required check for: Release tags (docker-build job)
+# Jobs: docker-build
+# ============================================================================
 name: Docker Build Check
 
 on:

@@ -1,3 +1,11 @@
+# ============================================================================
+# CI Workflow: Quality Gate Check
+# Branches: main, phase-18-release-readiness
+# Triggers: push to branch, pull_request targeting branch
+# Required check for: PR to main (quality-gate job)
+#                      Release tags (all jobs)
+# Jobs: sonar-analysis, quality-gate
+# ============================================================================
 name: Quality Gate Check
 
 on:

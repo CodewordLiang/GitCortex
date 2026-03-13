@@ -17,7 +17,11 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "quality": "pnpm run lint && pnpm run check && pnpm run test:run",
+    "quality:lint": "pnpm run lint",
+    "quality:types": "pnpm run check",
+    "quality:test": "pnpm run test:run"
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",

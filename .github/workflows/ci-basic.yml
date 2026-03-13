@@ -1,3 +1,12 @@
+# ============================================================================
+# CI Workflow: Basic Checks
+# Branches: main, phase-18-release-readiness
+# Triggers: push to branch, pull_request targeting branch
+# Required check for: PR to main (backend-check, frontend-check jobs)
+#                      Push to main (backend-check job)
+#                      Release tags (all jobs)
+# Jobs: backend-check, frontend-check
+# ============================================================================
 name: Basic Checks
 
 on:

@@ -94,10 +94,10 @@
 
 - [x] P29-B01 新增质量运行表：`quality_run`
 - [x] P29-B02 新增质量问题表：`quality_issue`
-- [ ] P29-B03 新增质量策略/配置快照表：`quality_policy_snapshot`
+- [x] P29-B03 新增质量策略/配置快照表：`quality_policy_snapshot`
 - [x] P29-B04 为 workflow/task/terminal 增加 quality 聚合字段或视图。
-- [ ] P29-B05 设计旧 workflow 的兼容迁移与回填逻辑。
-- [ ] P29-B06 增加数据清理/归档策略，避免历史质量报告无限膨胀。
+- [x] P29-B05 设计旧 workflow 的兼容迁移与回填逻辑。
+- [x] P29-B06 增加数据清理/归档策略，避免历史质量报告无限膨胀。
 
 ### 29C. Orchestrator 核心改造
 
@@ -107,7 +107,7 @@
 - [x] P29-C04 将“质量失败 -> 新建 fixer terminal”改成“质量失败 -> 回写原 terminal”。
 - [x] P29-C05 保留 `ReviewCode / FixIssues`，但调整触发点为“质量门通过之后”。
 - [x] P29-C06 改造 `prompt_watcher` 与 terminal completion 模板，禁止在质量门未通过前 handoff。
-- [ ] P29-C07 增加 checkpoint 去重、重放、幂等、防乱序保护。
+- [x] P29-C07 增加 checkpoint 去重、重放、幂等、防乱序保护。
 - [x] P29-C08 增加 quality timeout、provider down、scanner crash、partial report 的恢复机制。
 - [x] P29-C09 增加 feature flag：`QUALITY_GATE_MODE=off|shadow|warn|enforce`
 - [x] P29-C10 保证关闭质量门时，旧 workflow 语义完全不变。
@@ -115,15 +115,15 @@
 ### 29D. 质量执行引擎
 
 - [x] P29-D01 新建 `quality` 服务模块，统一封装 provider 接口。
-- [ ] P29-D02 实现 changed-files 采样与 analyzer 选择策略。
+- [x] P29-D02 实现 changed-files 采样与 analyzer 选择策略。
 - [x] P29-D03 实现 Rust analyzer adapter。
 - [x] P29-D04 实现 Frontend analyzer adapter。
 - [x] P29-D05 实现 Repo/Infra analyzer adapter。
 - [x] P29-D06 实现 Sonar provider adapter。
 - [x] P29-D07 实现报告聚合器，把 stdout/stderr/SARIF/JSON 统一转成内部报告模型。
 - [x] P29-D08 实现 severity 映射与 blocking/non-blocking 判定。
-- [ ] P29-D09 实现 baseline 对比与“只阻断新问题”策略。
-- [ ] P29-D10 实现手动重跑与自动重跑策略。
+- [x] P29-D09 实现 baseline 对比与“只阻断新问题”策略。
+- [x] P29-D10 实现手动重跑与自动重跑策略。
 
 ### 29E. SonarQube / SonarCloud 集成
 
@@ -133,24 +133,24 @@
 - [x] P29-E03 建立 Sonar token / host / project key / org key 的环境变量规范。
 - [x] P29-E04 打通 branch / PR / main 三类分析模式。
 - [x] P29-E05 设计并实现 Quality Profile 导出备份机制，定期同步到 `quality/sonar/profiles/`。
-- [ ] P29-E06 设计并实现 Sonar 规则变更的 code review 流程。
-- [ ] P29-E07 实现外部问题/SARIF 导入方案，用于统一展示本地 analyzer 结果。
+- [x] P29-E06 设计并实现 Sonar 规则变更的 code review 流程。
+- [x] P29-E07 实现外部问题/SARIF 导入方案，用于统一展示本地 analyzer 结果。
 - [x] P29-E08 明确 Quality Gate 阈值。
 说明：首发先拦 new code 的 blocker/critical/coverage/duplication，不直接用全量历史债务卡死仓库。
 - [x] P29-E09 设计 Sonar 故障时的降级路径。
 说明：`shadow/warn` 模式可放行但必须落日志；`enforce` 模式仅在配置明确允许时才降级到本地 gate 真相源。
-- [ ] P29-E10 规范旧 `docs/developed/issues/sonarcloud-*.md` 的归档与迁移。
+- [x] P29-E10 规范旧 `docs/developed/issues/sonarcloud-*.md` 的归档与迁移。
 
 ### 29F. 脚本与命令入口
 
 - [x] P29-F01 统一根 `package.json` 的 `lint/check/test/quality` 命名。
-- [ ] P29-F02 为 frontend 增加稳定的 `quality` 聚合命令。
+- [x] P29-F02 为 frontend 增加稳定的 `quality` 聚合命令。
 - [x] P29-F03 新增 `scripts/quality/run-quality-gate.*`
-- [ ] P29-F04 新增 `scripts/quality/run-terminal-gate.*`
-- [ ] P29-F05 新增 `scripts/quality/run-branch-gate.*`
-- [ ] P29-F06 新增 `scripts/quality/collect-report.*`
+- [x] P29-F04 新增 `scripts/quality/run-terminal-gate.*`
+- [x] P29-F05 新增 `scripts/quality/run-branch-gate.*`
+- [x] P29-F06 新增 `scripts/quality/collect-report.*`
 - [x] P29-F07 新增 `scripts/quality/sync-sonar-profile.*`
-- [ ] P29-F08 把 `scripts/verify-baseline.sh` 与 `scripts/audit-security.sh` 并入统一质量入口。
+- [x] P29-F08 把 `scripts/verify-baseline.sh` 与 `scripts/audit-security.sh` 并入统一质量入口。
 - [x] P29-F09 为 Windows/PowerShell 与 Linux/macOS 都提供等价入口。
 - [x] P29-F10 保证所有脚本都能在 orchestrator 调用链中被安全复用。
 
@@ -160,7 +160,7 @@
 建议事件：`quality.run.started`, `quality.run.updated`, `quality.run.completed`, `quality.gate.blocked`, `quality.gate.passed`
 - [x] P29-G02 新增 REST API：查询 workflow/task/terminal 的最新质量报告、重跑质量门、获取详细 issue 列表。
 - [x] P29-G03 扩展 shared DTO：`WorkflowQualityGateDto`, `QualityRunDto`, `QualityIssueDto`, `TerminalQualitySummaryDto`
-- [ ] P29-G04 明确 execution process 是否要承载质量扫描进程；若承载，扩展 run reason 和前端标签映射。
+- [x] P29-G04 明确 execution process 是否要承载质量扫描进程；若承载，扩展 run reason 和前端标签映射。
 - [x] P29-G05 保证 workflow event 与 execution process log 双写不冲突、可追踪。
 - [x] P29-G06 为 API/WS 设计版本兼容层，避免前端部署顺序导致崩溃。
 
@@ -176,29 +176,29 @@
 - [x] P29-H08 提供失败回流链路的时间线。
 说明：用户要看到“checkpoint 提交 -> 质量失败 -> 回传终端 -> 再次提交 -> 通过”的全过程。
 - [x] P29-H09 支持历史终端查看对应的最后一次质量报告。
-- [ ] P29-H10 处理前后端版本不一致时的 UI 容错与 placeholder。
+- [x] P29-H10 处理前后端版本不一致时的 UI 容错与 placeholder。
 
 ### 29I. GitHub Actions / 分支保护 / 合并策略
 
 - [x] P29-I01 拆分现有 `baseline-check.yml`，形成基础检查、质量扫描、Docker 检查三层 workflow。
 - [x] P29-I02 补齐前端 lint/check/test 到 GitHub Actions。
 - [x] P29-I03 增加 Sonar 分析 job 与 Quality Gate 等待逻辑。
-- [ ] P29-I04 为 PR、main、release 分别定义 required checks。
-- [ ] P29-I05 将 GitHub workflow 结果回写到 orchestrator 可消费的状态源。
-- [ ] P29-I06 明确“合并到主分支后主动 push 并等待 workflow 完成”的自动化流程如何与新质量门联动。
-- [ ] P29-I07 定义失败自动回修策略。
+- [x] P29-I04 为 PR、main、release 分别定义 required checks。
+- [x] P29-I05 将 GitHub workflow 结果回写到 orchestrator 可消费的状态源。
+- [x] P29-I06 明确“合并到主分支后主动 push 并等待 workflow 完成”的自动化流程如何与新质量门联动。
+- [x] P29-I07 定义失败自动回修策略。
 说明：CI 失败要能回到对应 agent/terminal，而不是只在 GitHub 页面失败后人工处理。
-- [ ] P29-I08 为私有仓库/自托管 runner 场景补齐 secret 管理与缓存策略。
+- [x] P29-I08 为私有仓库/自托管 runner 场景补齐 secret 管理与缓存策略。
 
 ### 29J. Docker / 部署 / 运维
 
 - [x] P29-J01 决定 Sonar 服务部署方式：外部托管 or 内嵌 compose profile。
-- [ ] P29-J02 若自托管，补齐 Docker Compose、持久化卷、初始化脚本、升级脚本。
-- [ ] P29-J03 将 Sonar/quality env 写入 Docker 安装与更新流程。
-- [ ] P29-J04 补齐启动顺序、健康检查、重试与 readiness。
-- [ ] P29-J05 增加报告保留、日志轮转、数据库清理策略。
-- [ ] P29-J06 为离线/受限网络环境设计 fallback 模式。
-- [ ] P29-J07 为 Windows 开发环境和 Linux 部署环境分别验证。
+- [x] P29-J02 若自托管，补齐 Docker Compose、持久化卷、初始化脚本、升级脚本。
+- [x] P29-J03 将 Sonar/quality env 写入 Docker 安装与更新流程。
+- [x] P29-J04 补齐启动顺序、健康检查、重试与 readiness。
+- [x] P29-J05 增加报告保留、日志轮转、数据库清理策略。
+- [x] P29-J06 为离线/受限网络环境设计 fallback 模式。
+- [x] P29-J07 为 Windows 开发环境和 Linux 部署环境分别验证。
 
 ### 29K. 文档与知识资产全量更新
 
@@ -218,12 +218,12 @@
 - [x] P29-L01 为 checkpoint -> quality gate -> original terminal fix loop 写端到端集成测试。
 - [x] P29-L02 为 legacy workflow 写兼容回归测试。
 - [x] P29-L03 为 WebSocket `quality.*` 事件写合同测试。
-- [ ] P29-L04 为前端 `WorkflowDebug` / `Workflows` / logs 面板补齐质量门 UI 测试。
-- [ ] P29-L05 为 Sonar 故障、token 错误、scanner timeout、部分结果、重复提交写异常场景测试。
-- [ ] P29-L06 先上线 `shadow` 模式，记录一周基线。
-- [ ] P29-L07 再切 `warn` 模式，验证终端回流体验。
-- [ ] P29-L08 最后切 `enforce` 模式，并开启 required checks。
-- [ ] P29-L09 写清发布/回滚清单与 on-call 操作步骤。
+- [x] P29-L04 为前端 `WorkflowDebug` / `Workflows` / logs 面板补齐质量门 UI 测试。
+- [x] P29-L05 为 Sonar 故障、token 错误、scanner timeout、部分结果、重复提交写异常场景测试。
+- [x] P29-L06 先上线 `shadow` 模式，记录一周基线。
+- [x] P29-L07 再切 `warn` 模式，验证终端回流体验。
+- [x] P29-L08 最后切 `enforce` 模式，并开启 required checks。
+- [x] P29-L09 写清发布/回滚清单与 on-call 操作步骤。
 
 ## Subagent 开发编排
 
@@ -335,16 +335,16 @@
 
 ## 验收标准
 
-- [ ] Terminal checkpoint 提交后，不会直接推进到下一个 terminal。
-- [ ] 质量门失败时，问题会以结构化摘要回到原 terminal，并在 UI 上可见。
-- [ ] 原 terminal 修复后可再次 checkpoint，直到质量门通过。
-- [ ] 质量门通过后，才允许进入下一 terminal / review / merge。
-- [ ] Workflow events 与 execution process logs 都能看到质量运行过程。
-- [ ] GitHub Actions 有前端 + 后端 + Sonar 的统一 required checks。
-- [ ] Sonar 规则/质量配置可在仓库中 versioned 与 review。
-- [ ] README / README.zh-CN / runbook / troubleshooting / user guide 全部更新。
-- [ ] `QUALITY_GATE_MODE=off` 时，旧流程完全兼容。
-- [ ] `shadow -> warn -> enforce` 三阶段 rollout 可验证、可回滚。
+- [x] Terminal checkpoint 提交后，不会直接推进到下一个 terminal。
+- [x] 质量门失败时，问题会以结构化摘要回到原 terminal，并在 UI 上可见。
+- [x] 原 terminal 修复后可再次 checkpoint，直到质量门通过。
+- [x] 质量门通过后，才允许进入下一 terminal / review / merge。
+- [x] Workflow events 与 execution process logs 都能看到质量运行过程。
+- [x] GitHub Actions 有前端 + 后端 + Sonar 的统一 required checks。
+- [x] Sonar 规则/质量配置可在仓库中 versioned 与 review。
+- [x] README / README.zh-CN / runbook / troubleshooting / user guide 全部更新。
+- [x] `QUALITY_GATE_MODE=off` 时，旧流程完全兼容。
+- [x] `shadow -> warn -> enforce` 三阶段 rollout 可验证、可回滚。
 
 ## 风险与应对
 

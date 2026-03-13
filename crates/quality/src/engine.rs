@@ -12,9 +12,12 @@ use crate::config::{QualityGateConfig, QualityGateMode};
 use crate::gate::evaluator::ConditionEvaluator;
 use crate::gate::result::MeasureValue;
 use crate::gate::QualityGateLevel;
+use crate::issue::QualityIssue;
 use crate::metrics::MetricKey;
 use crate::provider::QualityProvider;
 use crate::report::QualityReport;
+use crate::rule::AnalyzerSource;
+use crate::sarif;
 
 /// 质量门执行引擎
 ///
@@ -125,6 +128,15 @@ impl QualityEngine {
             }
         }
 
+        // Import any SARIF output files found in the project
+        let sarif_issues = Self::collect_sarif_issues(project_root).await;
+        if !sarif_issues.is_empty() {
+            info!("Imported {} issues from SARIF files", sarif_issues.len());
+            let sarif_report = crate::provider::ProviderReport::success("sarif-import", 0)
+                .with_issues(sarif_issues);
+            reports.push(sarif_report);
+        }
+
         // 聚合报告
         let mut quality_report = QualityReport::aggregate(reports);
 
@@ -158,5 +170,77 @@ impl QualityEngine {
     /// 获取模式
     pub fn mode(&self) -> QualityGateMode {
         self.config.mode
+    }
+
+    /// Scan well-known directories for SARIF output files and convert to QualityIssue.
+    ///
+    /// Looks in:
+    /// - `quality/sarif/` (project convention)
+    /// - `target/sarif/` (Rust tooling output)
+    /// - `.sarif/` (generic)
+    async fn collect_sarif_issues(project_root: &Path) -> Vec<QualityIssue> {
+        let search_dirs = [
+            project_root.join("quality/sarif"),
+            project_root.join("target/sarif"),
+            project_root.join(".sarif"),
+        ];
+
+        let mut all_issues = Vec::new();
+
+        for dir in &search_dirs {
+            if !dir.is_dir() {
+                continue;
+            }
+
+            let entries = match std::fs::read_dir(dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if ext != "sarif" && ext != "json" {
+                    continue;
+                }
+
+                match tokio::fs::read_to_string(&path).await {
+                    Ok(content) => match sarif::parse_sarif(&content) {
+                        Ok(report) => {
+                            let source = report
+                                .runs
+                                .first()
+                                .map(|r| {
+                                    let name = r.tool.driver.name.to_lowercase();
+                                    if name.contains("clippy") {
+                                        AnalyzerSource::Clippy
+                                    } else if name.contains("eslint") {
+                                        AnalyzerSource::EsLint
+                                    } else {
+                                        AnalyzerSource::Other(r.tool.driver.name.clone())
+                                    }
+                                })
+                                .unwrap_or(AnalyzerSource::Other("sarif".to_string()));
+
+                            let issues = sarif::sarif_to_issues(&report, source);
+                            info!(
+                                "Loaded {} issues from SARIF: {}",
+                                issues.len(),
+                                path.display()
+                            );
+                            all_issues.extend(issues);
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse SARIF {}: {}", path.display(), e);
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Failed to read SARIF {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+
+        all_issues
     }
 }

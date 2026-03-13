@@ -1,7 +1,8 @@
 import { useTerminalLatestQuality, useQualityIssues } from '@/hooks/useQualityGate';
+import { isQualityGateAvailable } from '@/lib/apiVersionCompat';
 import { QualityBadge } from '@/components/workflow/QualityBadge';
 import { QualityIssueList } from './QualityIssueList';
-import { AlertTriangle, StopCircle, Bug, Loader2 } from 'lucide-react';
+import { AlertTriangle, StopCircle, Bug, Loader2, ShieldOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from 'react-i18next';
 
@@ -22,6 +23,19 @@ export function QualityReportPanel({ terminalId, className, onRefresh }: Quality
       <div className="flex items-center justify-center p-8 text-slate-500">
         <Loader2 className="w-6 h-6 animate-spin mr-2" />
         <span className="text-sm">{t('panel.loading')}</span>
+      </div>
+    );
+  }
+
+  // Fallback when backend doesn't support quality gate (404 / version mismatch)
+  if (error && !isQualityGateAvailable(error)) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 text-slate-400 text-sm border border-dashed rounded-md">
+        <ShieldOff className="w-8 h-8 mb-2 text-slate-300" />
+        <span>{t('panel.notAvailable', 'Quality gate not available')}</span>
+        <span className="text-xs mt-1 text-slate-300">
+          {t('panel.notAvailableHint', 'The backend does not support this feature yet.')}
+        </span>
       </div>
     );
   }

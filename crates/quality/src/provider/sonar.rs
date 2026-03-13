@@ -1,6 +1,7 @@
 //! SonarQube 本地分析 Provider
 //!
 //! 集成本地运行的 SonarQube 服务和 sonar-scanner
+//! 支持 SARIF 2.1.0 外部问题导入
 
 use async_trait::async_trait;
 use std::path::Path;
@@ -8,8 +9,11 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::gate::result::MeasureValue;
+use crate::issue::QualityIssue;
 use crate::metrics::MetricKey;
 use crate::provider::{ProviderReport, QualityProvider};
+use crate::rule::AnalyzerSource;
+use crate::sarif;
 
 /// SonarQube 本地分析 Provider
 ///
@@ -47,6 +51,97 @@ impl SonarProvider {
             Ok(resp) => resp.status().is_success(),
             Err(_) => false,
         }
+    }
+
+    /// Import SARIF 2.1.0 results and convert to QualityIssue format.
+    ///
+    /// Reads a SARIF file, converts results to unified QualityIssue,
+    /// and optionally uploads to SonarCloud via the external issues API.
+    pub async fn import_sarif_results(
+        &self,
+        sarif_path: &Path,
+    ) -> anyhow::Result<Vec<QualityIssue>> {
+        let content = tokio::fs::read_to_string(sarif_path).await.map_err(|e| {
+            anyhow::anyhow!("Failed to read SARIF file {}: {}", sarif_path.display(), e)
+        })?;
+
+        let report = sarif::parse_sarif(&content)?;
+
+        // Determine analyzer source from the SARIF tool driver name
+        let source = report
+            .runs
+            .first()
+            .map(|run| match run.tool.driver.name.to_lowercase().as_str() {
+                s if s.contains("clippy") => AnalyzerSource::Clippy,
+                s if s.contains("eslint") => AnalyzerSource::EsLint,
+                s if s.contains("sonar") => AnalyzerSource::Sonar,
+                other => AnalyzerSource::Other(other.to_string()),
+            })
+            .unwrap_or(AnalyzerSource::Other("unknown".to_string()));
+
+        let issues = sarif::sarif_to_issues(&report, source);
+
+        info!(
+            "Imported {} issues from SARIF file: {}",
+            issues.len(),
+            sarif_path.display()
+        );
+
+        // Optionally upload to SonarCloud if token is configured
+        if self.token.is_some() && self.check_sonar_health().await {
+            if let Err(e) = self.upload_sarif_to_sonar(sarif_path).await {
+                warn!("Failed to upload SARIF to SonarQube: {}", e);
+            }
+        }
+
+        Ok(issues)
+    }
+
+    /// Upload a SARIF file to SonarQube via the external issues import API.
+    async fn upload_sarif_to_sonar(&self, sarif_path: &Path) -> anyhow::Result<()> {
+        let url = format!("{}/api/issues/import", self.host_url);
+        let content = tokio::fs::read(sarif_path).await?;
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(ref token) = self.token {
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", token).parse().unwrap(),
+            );
+        }
+
+        let form = reqwest::multipart::Form::new()
+            .text("projectKey", self.project_key.clone())
+            .part(
+                "report",
+                reqwest::multipart::Part::bytes(content)
+                    .file_name(
+                        sarif_path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string(),
+                    )
+                    .mime_str("application/json")?,
+            );
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .headers(headers)
+            .multipart(form)
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            info!("SARIF report uploaded to SonarQube successfully");
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            warn!("SonarQube SARIF upload returned {}: {}", status, body);
+        }
+
+        Ok(())
     }
 
     /// 等待 SonarQube 任务完成并获取质量门状态

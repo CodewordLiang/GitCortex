@@ -49,6 +49,14 @@ pub enum ExecutionProcessStatus {
     Killed,
 }
 
+/// Describes why an execution process was launched.
+///
+/// **Design Decision (P29-G04):** Quality scans are intentionally NOT modelled
+/// as `ExecutionProcess` records. They have their own lifecycle tracked in the
+/// `quality_run` table (see `crates/db/src/models/quality_run.rs`).
+/// The `QualityScan` variant is reserved here so that, if a future integration
+/// needs to spawn a long-running quality-analysis process inside a PTY, the
+/// run-reason taxonomy already accommodates it without a migration.
 #[derive(Debug, Clone, Type, Serialize, Deserialize, PartialEq, TS)]
 #[sqlx(type_name = "execution_process_run_reason", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
@@ -57,6 +65,9 @@ pub enum ExecutionProcessRunReason {
     CleanupScript,
     CodingAgent,
     DevServer,
+    /// Reserved for future quality-scan process integration.
+    /// Currently quality scans are tracked separately in `quality_run`.
+    QualityScan,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize, TS)]

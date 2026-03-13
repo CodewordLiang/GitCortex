@@ -69,6 +69,9 @@ pub struct OrchestratorState {
 
     /// Terminals currently waiting for quality gate evaluation.
     pub pending_quality_checks: HashSet<String>,
+
+    /// Set of processed checkpoint keys (`terminal_id:commit_hash`) for replay protection.
+    pub processed_checkpoints: HashSet<String>,
 }
 
 impl OrchestratorState {
@@ -85,6 +88,7 @@ impl OrchestratorState {
             processed_commits: HashSet::new(),
             pending_quiet_completion_checks: HashSet::new(),
             pending_quality_checks: HashSet::new(),
+            processed_checkpoints: HashSet::new(),
         }
     }
 

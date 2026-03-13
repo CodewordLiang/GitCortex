@@ -1,13 +1,21 @@
 #Requires -Version 5.1
 param(
     [string]$Tier = "repo",
-    [string]$Mode = "shadow"
+    [string]$Mode = "shadow",
+    [switch]$IncludeBaseline,
+    [switch]$IncludeSecurity,
+    [switch]$All
 )
 
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Resolve-Path (Join-Path $ScriptDir "../..")
+
+if ($All) {
+    $IncludeBaseline = $true
+    $IncludeSecurity = $true
+}
 
 Write-Host "=== GitCortex Quality Gate ==="
 Write-Host "Project root: $ProjectRoot"
@@ -23,11 +31,27 @@ cargo run --package quality -- `
   --tier $Tier `
   --mode $Mode
 
-if ($LASTEXITCODE -eq 0) {
-    Write-Host ""
-    Write-Host "Quality gate completed successfully."
-} else {
+if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Write-Host "Quality gate failed with exit code $LASTEXITCODE."
     exit $LASTEXITCODE
+}
+
+Write-Host ""
+Write-Host "Quality gate completed successfully."
+
+# Run baseline verification if requested
+if ($IncludeBaseline) {
+    Write-Host ""
+    Write-Host "=== Running Baseline Verification ==="
+    & bash "$ProjectRoot/scripts/verify-baseline.sh"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+# Run security audit if requested
+if ($IncludeSecurity) {
+    Write-Host ""
+    Write-Host "=== Running Security Audit ==="
+    & bash "$ProjectRoot/scripts/audit-security.sh"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }

@@ -8,6 +8,7 @@ use crate::{DeploymentImpl, feishu_handle::SharedFeishuHandle, middleware::requi
 
 pub mod approvals;
 pub mod chat_integrations;
+pub mod ci_webhook;
 pub mod cli_types;
 pub mod config;
 pub mod containers;
@@ -81,6 +82,7 @@ pub fn build_router(deployment: DeploymentImpl, hub: SharedSubscriptionHub, feis
         .nest("/workflows", provider_health::provider_health_routes())
         .nest("/workflows", quality::quality_workflow_routes())
         .nest("/quality", quality::quality_routes())
+        .nest("/ci", ci_webhook::ci_webhook_routes())
         .nest("/terminal", terminal_ws::terminal_ws_routes())
         .nest("/terminals", terminals::terminal_routes())
         .nest("/terminals", quality::quality_terminal_routes())

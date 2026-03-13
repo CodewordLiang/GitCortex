@@ -23,8 +23,23 @@ services:
       - GITCORTEX_ENCRYPTION_KEY=${GITCORTEX_ENCRYPTION_KEY:?Set GITCORTEX_ENCRYPTION_KEY in docker/compose/.env}
       - GITCORTEX_API_TOKEN=${GITCORTEX_DOCKER_API_TOKEN:-}
       - GITCORTEX_AUTO_SETUP_PROJECTS=${GITCORTEX_AUTO_SETUP_PROJECTS:-1}
+      # Quality gate configuration
+      - QUALITY_GATE_MODE=${QUALITY_GATE_MODE:-shadow}
+      - SONAR_TOKEN=${SONAR_TOKEN:-}
+      - SONAR_HOST_URL=${SONAR_HOST_URL:-http://sonarqube:9000}
+      - SONAR_PROJECT_KEY=${SONAR_PROJECT_KEY:-gitcortex}
     env_file:
       - .env
+    depends_on:
+      sonarqube:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:23456/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
 
   sonarqube-db:
     image: postgres:15
@@ -39,6 +54,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   sonarqube:
     image: sonarqube:10.5-community
@@ -60,6 +76,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 60s
+    restart: unless-stopped
 
 volumes:
   gitcortex-dev-data:

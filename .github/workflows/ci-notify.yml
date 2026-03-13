@@ -1,0 +1,62 @@
+# ============================================================================
+# CI Workflow: Notify Orchestrator
+# Triggers: workflow_run completion of ci-basic, ci-quality, ci-docker
+# Purpose: Posts CI results to GitCortex API for orchestrator consumption
+# Required check for: None (notification-only)
+# ============================================================================
+name: CI Notify Orchestrator
+
+on:
+  workflow_run:
+    workflows:
+      - "Basic Checks"
+      - "Quality Gate Check"
+      - "Docker Build Check"
+    types:
+      - completed
+
+jobs:
+  notify:
+    name: Notify GitCortex API
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Post result to GitCortex orchestrator
+      env:
+        GITCORTEX_API_URL: ${{ vars.GITCORTEX_API_URL || 'http://localhost:23456' }}
+        GITCORTEX_API_TOKEN: ${{ secrets.GITCORTEX_API_TOKEN }}
+      run: |
+        PAYLOAD=$(cat <<EOF
+        {
+          "workflow": "${{ github.event.workflow_run.name }}",
+          "conclusion": "${{ github.event.workflow_run.conclusion }}",
+          "sha": "${{ github.event.workflow_run.head_sha }}",
+          "branch": "${{ github.event.workflow_run.head_branch }}",
+          "run_id": ${{ github.event.workflow_run.id }},
+          "run_url": "${{ github.event.workflow_run.html_url }}"
+        }
+        EOF
+        )
+
+        echo "Sending CI notification:"
+        echo "$PAYLOAD" | jq .
+
+        # POST to GitCortex API (best-effort, non-blocking)
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          -X POST "${GITCORTEX_API_URL}/api/ci/webhook" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${GITCORTEX_API_TOKEN}" \
+          -d "$PAYLOAD" \
+          --connect-timeout 10 \
+          --max-time 30 \
+        ) || true
+
+        echo "API response status: ${HTTP_STATUS:-timeout}"
+
+        # Log but don't fail - this is notification-only
+        if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "202" ]; then
+          echo "Notification delivered successfully."
+        else
+          echo "Warning: Notification delivery returned status ${HTTP_STATUS:-unknown}. This is non-blocking."
+        fi
