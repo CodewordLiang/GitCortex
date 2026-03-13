@@ -13,10 +13,10 @@ vi.mock('react-i18next', () => ({
         'status.skipped': 'Skipped',
       };
       if (key === 'status.warnCount' && opts?.count !== undefined) {
-        return `${opts.count} warnings`;
+        return `${Number(opts.count)} warnings`;
       }
       if (key === 'status.errorCount' && opts?.count !== undefined) {
-        return `${opts.count} blocking`;
+        return `${Number(opts.count)} blocking`;
       }
       return translations[key] ?? key;
     },

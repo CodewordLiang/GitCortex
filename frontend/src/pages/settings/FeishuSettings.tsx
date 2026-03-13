@@ -130,11 +130,11 @@ export function FeishuSettings() {
               <XCircle className="h-5 w-5 text-destructive" />
             )}
             <span className="text-sm font-medium">
-              {isConnected
-                ? t('settings.feishu.status.connected')
-                : isConfigured
-                  ? t('settings.feishu.status.disconnected')
-                  : t('settings.feishu.status.notConfigured')}
+              {(() => {
+                if (isConnected) return t('settings.feishu.status.connected');
+                if (isConfigured) return t('settings.feishu.status.disconnected');
+                return t('settings.feishu.status.notConfigured');
+              })()}
             </span>
           </div>
 

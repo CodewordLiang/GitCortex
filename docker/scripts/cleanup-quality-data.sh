@@ -19,7 +19,7 @@ echo "  Log compress  : ${LOG_COMPRESS_DAYS} days"
 echo ""
 
 # ── Step 1: SQLite DB cleanup ─────────────────────────────────────
-if [ -f "${DB_PATH}" ]; then
+if [[ -f "${DB_PATH}" ]]; then
     echo "[cleanup] Cleaning quality_run records older than ${RETENTION_DAYS} days ..."
     cutoff=$(date -u -d "-${RETENTION_DAYS} days" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null \
         || date -u -v-${RETENTION_DAYS}d +"%Y-%m-%dT%H:%M:%S")
@@ -43,11 +43,11 @@ SQL
     sqlite3 "${DB_PATH}" "VACUUM;"
     echo "[cleanup]   Database vacuumed."
 else
-    echo "[cleanup] WARN: Database not found at ${DB_PATH}, skipping."
+    echo "[cleanup] WARN: Database not found at ${DB_PATH}, skipping." >&2
 fi
 
 # ── Step 2: Log rotation ──────────────────────────────────────────
-if [ -d "${LOG_DIR}" ]; then
+if [[ -d "${LOG_DIR}" ]]; then
     echo "[cleanup] Compressing logs older than ${LOG_COMPRESS_DAYS} days ..."
     compressed=0
     while IFS= read -r -d '' logfile; do
@@ -64,17 +64,17 @@ if [ -d "${LOG_DIR}" ]; then
     done < <(find "${LOG_DIR}" -name "*.log.gz" -mtime +${RETENTION_DAYS} -print0 2>/dev/null)
     echo "[cleanup]   Removed ${removed} old compressed logs."
 else
-    echo "[cleanup] WARN: Log directory not found at ${LOG_DIR}, skipping."
+    echo "[cleanup] WARN: Log directory not found at ${LOG_DIR}, skipping." >&2
 fi
 
 # ── Step 3: Disk usage report ─────────────────────────────────────
 echo ""
 echo "[cleanup] Disk usage report:"
-if [ -f "${DB_PATH}" ]; then
+if [[ -f "${DB_PATH}" ]]; then
     db_size=$(du -h "${DB_PATH}" | cut -f1)
     echo "  Database     : ${db_size}"
 fi
-if [ -d "${LOG_DIR}" ]; then
+if [[ -d "${LOG_DIR}" ]]; then
     log_size=$(du -sh "${LOG_DIR}" | cut -f1)
     echo "  Logs         : ${log_size}"
 fi

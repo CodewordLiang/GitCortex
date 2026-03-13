@@ -56,15 +56,15 @@ elapsed=0
 while true; do
     status=$(curl -sf "${SONAR_URL}/api/system/status" 2>/dev/null \
         | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || true)
-    if [ "$status" = "UP" ]; then
+    if [[ "$status" = "UP" ]]; then
         echo "[upgrade] SonarQube is UP after ${elapsed}s"
         break
     fi
-    if [ "$status" = "DB_MIGRATION_RUNNING" ]; then
+    if [[ "$status" = "DB_MIGRATION_RUNNING" ]]; then
         echo "[upgrade]   DB migration in progress (${elapsed}s) ..."
     fi
-    if [ "$elapsed" -ge "$MAX_WAIT" ]; then
-        echo "[upgrade] ERROR: SonarQube not healthy after ${MAX_WAIT}s (status=${status:-unknown})"
+    if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
+        echo "[upgrade] ERROR: SonarQube not healthy after ${MAX_WAIT}s (status=${status:-unknown})" >&2
         echo "[upgrade] To rollback, restore from: ${BACKUP_DIR}"
         exit 1
     fi

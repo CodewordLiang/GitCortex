@@ -15,12 +15,12 @@ echo "[init-sonar] Waiting for SonarQube at ${SONAR_URL} ..."
 elapsed=0
 while true; do
     status=$(curl -sf "${SONAR_URL}/api/system/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || true)
-    if [ "$status" = "UP" ]; then
+    if [[ "$status" = "UP" ]]; then
         echo "[init-sonar] SonarQube is UP (${elapsed}s)"
         break
     fi
-    if [ "$elapsed" -ge "$MAX_WAIT" ]; then
-        echo "[init-sonar] ERROR: SonarQube not ready after ${MAX_WAIT}s (status=${status:-unknown})"
+    if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
+        echo "[init-sonar] ERROR: SonarQube not ready after ${MAX_WAIT}s (status=${status:-unknown})" >&2
         exit 1
     fi
     sleep "$POLL_INTERVAL"
@@ -33,7 +33,7 @@ project_exists=$(curl -sf -u "admin:${ADMIN_PASS}" \
     "${SONAR_URL}/api/projects/search?projects=${PROJECT_KEY}" \
     | grep -c "\"key\":\"${PROJECT_KEY}\"" || true)
 
-if [ "$project_exists" -eq 0 ]; then
+if [[ "$project_exists" -eq 0 ]]; then
     echo "[init-sonar] Creating project '${PROJECT_KEY}' ..."
     curl -sf -u "admin:${ADMIN_PASS}" -X POST \
         "${SONAR_URL}/api/projects/create" \
@@ -51,7 +51,7 @@ for lang in ts js; do
     curl -sf -u "admin:${ADMIN_PASS}" -X POST \
         "${SONAR_URL}/api/qualityprofiles/set_default" \
         -d "language=${lang}&qualityProfile=Sonar%20way" \
-        > /dev/null 2>&1 || echo "[init-sonar] WARN: Could not set default profile for ${lang}"
+        > /dev/null 2>&1 || echo "[init-sonar] WARN: Could not set default profile for ${lang}" >&2
 done
 echo "[init-sonar] Quality profiles configured."
 
@@ -64,7 +64,7 @@ webhook_exists=$(curl -sf -u "admin:${ADMIN_PASS}" \
     "${SONAR_URL}/api/webhooks/list?project=${PROJECT_KEY}" \
     | grep -c "${WEBHOOK_URL}" || true)
 
-if [ "$webhook_exists" -eq 0 ]; then
+if [[ "$webhook_exists" -eq 0 ]]; then
     echo "[init-sonar] Creating webhook -> ${WEBHOOK_URL} ..."
     curl -sf -u "admin:${ADMIN_PASS}" -X POST \
         "${SONAR_URL}/api/webhooks/create" \

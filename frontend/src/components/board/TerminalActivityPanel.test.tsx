@@ -22,7 +22,7 @@ vi.mock('react-i18next', () => ({
         'terminalActivity.defaultLabel': 'Terminal',
       };
       if (opts?.count !== undefined && key === 'terminalActivity.active') {
-        return `${opts.count} active`;
+        return `${Number(opts.count)} active`;
       }
       return translations[key] ?? key;
     },

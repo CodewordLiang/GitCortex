@@ -164,7 +164,7 @@ function BranchSelector({
       const start = highlightedIndex ?? -1;
       let next = start;
 
-      for (let i = 0; i < filteredBranches.length; i++) {
+      for (const _ of filteredBranches) {
         next =
           (next + delta + filteredBranches.length) % filteredBranches.length;
         if (!isBranchDisabled(filteredBranches[next])) {

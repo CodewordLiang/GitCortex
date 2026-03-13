@@ -26,18 +26,21 @@ jobs:
       env:
         GITCORTEX_API_URL: ${{ vars.GITCORTEX_API_URL || 'http://localhost:23456' }}
         GITCORTEX_API_TOKEN: ${{ secrets.GITCORTEX_API_TOKEN }}
+        WF_NAME: ${{ github.event.workflow_run.name }}
+        WF_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        WF_SHA: ${{ github.event.workflow_run.head_sha }}
+        WF_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        WF_RUN_ID: ${{ github.event.workflow_run.id }}
+        WF_RUN_URL: ${{ github.event.workflow_run.html_url }}
       run: |
-        PAYLOAD=$(cat <<EOF
-        {
-          "workflow": "${{ github.event.workflow_run.name }}",
-          "conclusion": "${{ github.event.workflow_run.conclusion }}",
-          "sha": "${{ github.event.workflow_run.head_sha }}",
-          "branch": "${{ github.event.workflow_run.head_branch }}",
-          "run_id": ${{ github.event.workflow_run.id }},
-          "run_url": "${{ github.event.workflow_run.html_url }}"
-        }
-        EOF
-        )
+        PAYLOAD=$(jq -n \
+          --arg workflow "$WF_NAME" \
+          --arg conclusion "$WF_CONCLUSION" \
+          --arg sha "$WF_SHA" \
+          --arg branch "$WF_BRANCH" \
+          --argjson run_id "${WF_RUN_ID}" \
+          --arg run_url "$WF_RUN_URL" \
+          '{workflow: $workflow, conclusion: $conclusion, sha: $sha, branch: $branch, run_id: $run_id, run_url: $run_url}')
 
         echo "Sending CI notification:"
         echo "$PAYLOAD" | jq .

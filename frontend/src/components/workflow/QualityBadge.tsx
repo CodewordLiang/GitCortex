@@ -2,10 +2,10 @@ import { Shield, ShieldCheck, ShieldAlert, ShieldX, Loader2 } from 'lucide-react
 import { StatusPill } from '@/components/ui-new/primitives/StatusPill';
 import { useTranslation } from 'react-i18next';
 
-type GateStatus = 'pending' | 'running' | 'ok' | 'warn' | 'error' | 'skipped';
+export type GateStatus = 'pending' | 'running' | 'ok' | 'warn' | 'error' | 'skipped';
 
 interface QualityBadgeProps {
-  readonly gateStatus: GateStatus | string;
+  readonly gateStatus: GateStatus;
   readonly totalIssues?: number;
   readonly blockingIssues?: number;
   readonly mode?: string;

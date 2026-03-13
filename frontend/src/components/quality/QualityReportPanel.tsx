@@ -1,6 +1,6 @@
 import { useTerminalLatestQuality, useQualityIssues } from '@/hooks/useQualityGate';
 import { isQualityGateAvailable } from '@/lib/apiVersionCompat';
-import { QualityBadge } from '@/components/workflow/QualityBadge';
+import { QualityBadge, type GateStatus } from '@/components/workflow/QualityBadge';
 import { QualityIssueList } from './QualityIssueList';
 import { AlertTriangle, StopCircle, Bug, Loader2, ShieldOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,7 @@ export interface QualityReportPanelProps {
   onRefresh?: () => void;
 }
 
-export function QualityReportPanel({ terminalId, className, onRefresh }: QualityReportPanelProps) {
+export function QualityReportPanel({ terminalId, className, onRefresh }: Readonly<QualityReportPanelProps>) {
   const { t } = useTranslation('quality');
   const { data: latestRun, isLoading, error, refetch } = useTerminalLatestQuality(terminalId);
   const runId = latestRun?.id;
@@ -90,7 +90,7 @@ export function QualityReportPanel({ terminalId, className, onRefresh }: Quality
           <Button variant="outline" size="sm" onClick={() => { refetch(); onRefresh?.(); }}>
             {t('panel.refresh')}
           </Button>
-          <QualityBadge gateStatus={latestRun?.gateStatus ?? 'pending'} />
+          <QualityBadge gateStatus={(latestRun?.gateStatus ?? 'pending') as GateStatus} />
         </div>
       </div>
 

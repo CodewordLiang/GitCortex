@@ -294,7 +294,6 @@ export const useWizardStore = create<WizardStoreState>((set, get) => ({
   clearError: (key) => {
     set((state) => {
       const { [key]: _removed, ...rest } = state.errors;
-      void _removed;
       return { errors: rest };
     });
   },

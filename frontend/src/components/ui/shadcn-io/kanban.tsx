@@ -26,7 +26,6 @@ export function KanbanCard({
 }: Readonly<KanbanCardProps>) {
   // These destructured props are consumed by the drag-and-drop library at a higher level
   // and must be extracted here to avoid passing them to the DOM element via ...props.
-  void _id; void _name; void _index; void _parent; void _isOpen; void _dragDisabled;
   return (
     <div
       ref={forwardedRef}

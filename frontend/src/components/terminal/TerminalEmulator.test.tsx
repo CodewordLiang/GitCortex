@@ -111,7 +111,7 @@ describe('TerminalEmulator', () => {
 
     it('should have accessibility attributes', () => {
       render(<TerminalEmulator terminalId={VALID_TERMINAL_ID} />);
-      const container = document.querySelector('[role="terminal"]');
+      const container = document.querySelector('[role="application"]');
       expect(container).toBeInTheDocument();
       expect(container).toHaveAttribute('aria-label', 'Terminal emulator');
     });

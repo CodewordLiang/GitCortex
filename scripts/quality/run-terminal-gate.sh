@@ -51,7 +51,7 @@ cargo run --package quality -- \
 
 EXIT_CODE=$?
 
-if [ $EXIT_CODE -eq 0 ]; then
+if [[ $EXIT_CODE -eq 0 ]]; then
   echo ""
   echo "Terminal quality gate passed."
 else

@@ -2,7 +2,7 @@ import React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { TerminalCard, type Terminal } from './TerminalCard';
-import { QualityBadge } from './QualityBadge';
+import { QualityBadge, type GateStatus } from './QualityBadge';
 import { useTerminalLatestQuality } from '@/hooks/useQualityGate';
 import { useTranslation } from 'react-i18next';
 
@@ -71,7 +71,7 @@ function TerminalQualityIndicator({ terminalId }: Readonly<{ terminalId: string 
   return (
     <div className="mt-1">
       <QualityBadge
-        gateStatus={data.gateStatus}
+        gateStatus={data.gateStatus as GateStatus}
         totalIssues={data.totalIssues}
         blockingIssues={data.blockingIssues}
       />

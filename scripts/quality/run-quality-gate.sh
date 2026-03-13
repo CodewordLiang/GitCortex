@@ -50,7 +50,7 @@ cargo run --package quality -- \
 
 EXIT_CODE=$?
 
-if [ $EXIT_CODE -ne 0 ]; then
+if [[ $EXIT_CODE -ne 0 ]]; then
   echo ""
   echo "Quality gate failed with exit code $EXIT_CODE."
   exit $EXIT_CODE

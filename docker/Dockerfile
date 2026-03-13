@@ -81,7 +81,15 @@ ENV SQLX_OFFLINE=true \
 RUN set -eux; \
     if [ "$GITCORTEX_BUILD_NETWORK_PROFILE" = "china" ]; then \
         mkdir -p /usr/local/cargo && \
-        printf '[source.crates-io]\nreplace-with = "rsproxy-sparse"\n\n[source.rsproxy-sparse]\nregistry = "sparse+https://rsproxy.cn/crates.io-index/"\n\n[registries.rsproxy-sparse]\nindex = "sparse+https://rsproxy.cn/crates.io-index/"\n' \
+        printf '%s\n' \
+            '[source.crates-io]' \
+            'replace-with = "rsproxy-sparse"' \
+            '' \
+            '[source.rsproxy-sparse]' \
+            'registry = "sparse+https://rsproxy.cn/crates.io-index/"' \
+            '' \
+            '[registries.rsproxy-sparse]' \
+            'index = "sparse+https://rsproxy.cn/crates.io-index/"' \
             >> /usr/local/cargo/config.toml; \
     fi
 
@@ -135,7 +143,10 @@ RUN set -eux; \
         arm64) NODE_ARCH="arm64" ;; \
         *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
     esac; \
-    NODE_VERSION="$(curl -fsSL "${NODE_DIST_URL}/latest-v${NODE_MAJOR}.x/" | grep -oP 'node-v\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)"; \
+    NODE_VERSION="$(curl -fsSL \
+        "${NODE_DIST_URL}/latest-v${NODE_MAJOR}.x/" \
+        | grep -oP 'node-v\K[0-9]+\.[0-9]+\.[0-9]+' \
+        | head -1)"; \
     curl -fsSL "${NODE_DIST_URL}/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
         | tar -xJ --strip-components=1 -C /usr/local; \
     node --version && npm --version
@@ -147,14 +158,15 @@ RUN set -eux; \
     npm config --global set fetch-timeout 300000; \
     if [ "$GITCORTEX_BUILD_NETWORK_PROFILE" = "china" ]; then \
         npm config --global set registry https://registry.npmmirror.com; \
-    fi
-
-RUN set -eux; \
+    fi; \
     if [ "$INSTALL_AI_CLIS" = "1" ]; then \
         mkdir -p /etc/apt/keyrings; \
         if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
             | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-            && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+            && GHCLI_ARCH="$(dpkg --print-architecture)" \
+            && GHCLI_KR="/usr/share/keyrings/githubcli-archive-keyring.gpg" \
+            && echo "deb [arch=${GHCLI_ARCH} signed-by=${GHCLI_KR}] https://cli.github.com/packages stable main" \
+                > /etc/apt/sources.list.d/github-cli.list \
             && apt-get update \
             && apt-get install -y --no-install-recommends gh; then \
             echo "Installed gh CLI"; \
@@ -168,10 +180,11 @@ RUN set -eux; \
 ENV NPM_CONFIG_PREFIX=/var/lib/gitcortex/.npm-global \
     GH_EXTENSIONS_DIR=/var/lib/gitcortex/gh-extensions \
     PATH=/var/lib/gitcortex/.npm-global/bin:$PATH
-RUN mkdir -p /var/lib/gitcortex/.npm-global /var/lib/gitcortex/gh-extensions
 
 COPY scripts/docker/install/ /opt/gitcortex/install/
-RUN if [ "$INSTALL_AI_CLIS" = "1" ]; then \
+RUN mkdir -p /var/lib/gitcortex/.npm-global \
+        /var/lib/gitcortex/gh-extensions \
+    && if [ "$INSTALL_AI_CLIS" = "1" ]; then \
         bash /opt/gitcortex/install/install-ai-clis.sh; \
     else \
         echo "Skipping AI CLI installation during image build (INSTALL_AI_CLIS=$INSTALL_AI_CLIS)"; \

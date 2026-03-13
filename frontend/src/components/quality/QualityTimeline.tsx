@@ -7,7 +7,21 @@ export interface QualityTimelineProps {
   className?: string;
 }
 
-export function QualityTimeline({ runs, className }: QualityTimelineProps) {
+function getStepCircleClass(status: string, stepId: string): string {
+  if (status === 'completed') return "border-green-500 text-green-500";
+  if (status === 'current' && stepId === 'feedback') return "border-amber-500 text-amber-500 bg-amber-50 dark:bg-amber-950/20 shadow-[0_0_0_4px_rgba(245,158,11,0.1)]";
+  if (status === 'current') return "border-blue-500 text-blue-500 bg-blue-50 dark:bg-blue-950/20 shadow-[0_0_0_4px_rgba(59,130,246,0.1)] animate-pulse";
+  return "border-slate-200 dark:border-slate-800 text-slate-300 dark:text-slate-700";
+}
+
+function getStepLabelClass(status: string, stepId: string): string {
+  if (status === 'completed') return "text-slate-600 dark:text-slate-400";
+  if (status === 'current' && stepId === 'feedback') return "text-amber-600 dark:text-amber-500";
+  if (status === 'current') return "text-blue-600 dark:text-blue-500";
+  return "text-slate-400 dark:text-slate-600";
+}
+
+export function QualityTimeline({ runs, className }: Readonly<QualityTimelineProps>) {
   const steps = [
     { id: 'checkpoint', label: 'Checkpoint' },
     { id: 'analysis', label: 'Analysis' },
@@ -49,10 +63,7 @@ export function QualityTimeline({ runs, className }: QualityTimelineProps) {
               <div 
                 className={cn(
                   "w-8 h-8 rounded-full flex items-center justify-center border-2 transition-colors bg-white dark:bg-slate-950",
-                  status === 'completed' ? "border-green-500 text-green-500" :
-                  status === 'current' && step.id === 'feedback' ? "border-amber-500 text-amber-500 bg-amber-50 dark:bg-amber-950/20 shadow-[0_0_0_4px_rgba(245,158,11,0.1)]" :
-                  status === 'current' ? "border-blue-500 text-blue-500 bg-blue-50 dark:bg-blue-950/20 shadow-[0_0_0_4px_rgba(59,130,246,0.1)] animate-pulse" :
-                  "border-slate-200 dark:border-slate-800 text-slate-300 dark:text-slate-700"
+                  getStepCircleClass(status, step.id)
                 )}
               >
                 {status === 'completed' && <CheckCircle className="w-4 h-4" />}
@@ -63,10 +74,7 @@ export function QualityTimeline({ runs, className }: QualityTimelineProps) {
               
               <div className={cn(
                 "absolute top-10 text-[10px] font-semibold tracking-wider uppercase whitespace-nowrap",
-                status === 'completed' ? "text-slate-600 dark:text-slate-400" :
-                status === 'current' && step.id === 'feedback' ? "text-amber-600 dark:text-amber-500" :
-                status === 'current' ? "text-blue-600 dark:text-blue-500" :
-                "text-slate-400 dark:text-slate-600"
+                getStepLabelClass(status, step.id)
               )}>
                 {step.label}
               </div>

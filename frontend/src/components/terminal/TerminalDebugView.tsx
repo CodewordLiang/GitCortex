@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { TerminalEmulator, type TerminalEmulatorRef } from './TerminalEmulator';
-import { QualityBadge } from '@/components/workflow/QualityBadge';
+import { QualityBadge, type GateStatus } from '@/components/workflow/QualityBadge';
 import { QualityReportPanel } from '@/components/quality/QualityReportPanel';
 import { useTerminalLatestQuality } from '@/hooks/useQualityGate';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
@@ -462,9 +462,9 @@ export function TerminalDebugView({ tasks, wsUrl }: Readonly<Props>) {
                   </p>
                 </div>
                 <div>
-                  <div onClick={() => setIsQualityPanelOpen(true)}>
+                  <button type="button" className="appearance-none bg-transparent border-none p-0 m-0" onClick={() => setIsQualityPanelOpen(true)}>
                     <TerminalQualityBadgeInline terminalId={selectedTerminal.id} className="cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" />
-                  </div>
+                  </button>
                   <Dialog open={isQualityPanelOpen} onOpenChange={setIsQualityPanelOpen}>
                     <DialogContent className="sm:max-w-[700px] max-h-[85vh] overflow-hidden flex flex-col border-slate-200 dark:border-slate-800">
                       <QualityReportPanel terminalId={selectedTerminal.id} className="flex-1 overflow-y-auto pr-2 mt-2" />
@@ -580,7 +580,7 @@ function TerminalQualityBadgeInline({ terminalId, className }: Readonly<{ termin
   if (!data) return null;
   return (
     <QualityBadge
-      gateStatus={data.gateStatus}
+      gateStatus={data.gateStatus as GateStatus}
       totalIssues={data.totalIssues}
       blockingIssues={data.blockingIssues}
       className={className}

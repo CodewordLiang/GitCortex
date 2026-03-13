@@ -30,8 +30,9 @@ const IssueItem = ({ issue }: { issue: QualityIssueRecord }) => {
 
   return (
     <div className="border border-slate-200 dark:border-slate-800 rounded-md overflow-hidden bg-white dark:bg-slate-900 transition-all hover:border-slate-300 dark:hover:border-slate-700">
-      <div 
-        className="flex items-start p-3 cursor-pointer gap-3"
+      <button
+        type="button"
+        className="flex items-start p-3 cursor-pointer gap-3 w-full text-left bg-transparent border-none"
         onClick={() => setExpanded(!expanded)}
       >
         <div className="mt-0.5">
@@ -61,13 +62,13 @@ const IssueItem = ({ issue }: { issue: QualityIssueRecord }) => {
         <Button variant="ghost" size="icon" className="w-6 h-6 shrink-0 mt-0.5">
           {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </Button>
-      </div>
+      </button>
       {/* Removed context view because it is not provided by the DTO */}
     </div>
   );
 };
 
-export function QualityIssueList({ issues, className, maxHeight = '400px' }: QualityIssueListProps) {
+export function QualityIssueList({ issues, className, maxHeight = '400px' }: Readonly<QualityIssueListProps>) {
   if (!issues || issues.length === 0) {
     return (
       <div className={cn("flex flex-col items-center justify-center p-8 text-slate-500 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-dashed border-slate-200 dark:border-slate-800", className)}>
