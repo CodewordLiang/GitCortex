@@ -478,9 +478,14 @@ mod orchestrator_tests {
             content: "Hello".to_string(),
         }];
 
-        let response = client.chat(messages).await.unwrap();
+        let result = client.chat(messages).await;
 
-        assert_eq!(response.content, "");
+        // G24-005: Empty choices now returns an error instead of empty string
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("empty choices"),
+            "Error should mention empty choices"
+        );
     }
 
     // =========================================================================

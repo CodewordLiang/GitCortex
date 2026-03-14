@@ -1192,8 +1192,9 @@ mod tests {
         .expect("settings.json should be valid JSON");
 
         assert_eq!(settings["primaryApiKey"], "sk-ant-test");
-        assert_eq!(settings["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-ant-test");
+        // sk- prefix keys use ANTHROPIC_API_KEY only (not AUTH_TOKEN)
         assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "sk-ant-test");
+        assert!(settings["env"]["ANTHROPIC_AUTH_TOKEN"].is_null());
         assert_eq!(
             settings["env"]["ANTHROPIC_MODEL"],
             "claude-sonnet-4-20250514"

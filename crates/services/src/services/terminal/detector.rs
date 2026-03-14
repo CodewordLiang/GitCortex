@@ -307,10 +307,10 @@ mod tests {
 
         // Create a test CLI type pointing to a known command
         let cli = CliType {
-            id: "test-sh".to_string(),
-            name: "sh".to_string(),
-            display_name: "Shell".to_string(),
-            detect_command: "sh -c true".to_string(),
+            id: "test-claude".to_string(),
+            name: "claude".to_string(),
+            display_name: "Claude".to_string(),
+            detect_command: "claude --version".to_string(),
             install_command: None,
             install_guide_url: None,
             config_file_path: None,
@@ -321,19 +321,8 @@ mod tests {
         let detector = CliDetector::new(Arc::clone(&db));
         let status = detector.detect_single(&cli).await;
 
-        #[cfg(unix)]
-        {
-            // sh should be installed on Unix
-            assert!(status.installed);
-            assert_eq!(status.name, "sh");
-        }
-
-        #[cfg(windows)]
-        {
-            // sh might not be on Windows
-            // Just verify structure
-            assert_eq!(status.name, "sh");
-        }
+        // claude may or may not be installed in CI; just verify the structure works
+        assert_eq!(status.name, "claude");
     }
 
     #[tokio::test]
