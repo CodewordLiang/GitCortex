@@ -455,10 +455,19 @@ impl TerminalBridge {
         drop(tx);
 
         if !writer_finished {
-            match writer_task.await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => return Err(e),
-                Err(e) => return Err(anyhow::anyhow!("Writer task join error: {e}")),
+            // [G21-004] Apply a timeout so the bridge does not hang indefinitely
+            // if the blocking writer task is stuck after the PTY has exited.
+            match tokio::time::timeout(Duration::from_secs(5), writer_task).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(e))) => return Err(e),
+                Ok(Err(e)) => return Err(anyhow::anyhow!("Writer task join error: {e}")),
+                Err(_elapsed) => {
+                    tracing::warn!(
+                        terminal_id = %terminal_id,
+                        pty_session_id = %pty_session_id,
+                        "Writer task did not finish within 5s after bridge shutdown; abandoning"
+                    );
+                }
             }
         }
 

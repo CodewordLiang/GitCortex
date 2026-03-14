@@ -1,9 +1,14 @@
-use std::{env, path::PathBuf};
+use std::path::PathBuf;
 
 use tokio::fs;
 
+use crate::path::get_gitcortex_temp_dir;
+
+/// [G36-008] Uses `get_gitcortex_temp_dir()` so the port file location is
+/// consistent with the rest of the codebase (respects `GITCORTEX_TEMP_DIR`
+/// and the debug/release "gitcortex-dev" vs "gitcortex" distinction).
 pub async fn write_port_file(port: u16) -> std::io::Result<PathBuf> {
-    let dir = env::temp_dir().join("gitcortex");
+    let dir = get_gitcortex_temp_dir();
     let path = dir.join("gitcortex.port");
     tracing::debug!("Writing port {} to {:?}", port, path);
     fs::create_dir_all(&dir).await?;
@@ -12,7 +17,7 @@ pub async fn write_port_file(port: u16) -> std::io::Result<PathBuf> {
 }
 
 pub async fn read_port_file(app_name: &str) -> std::io::Result<u16> {
-    let dir = env::temp_dir().join(app_name);
+    let dir = get_gitcortex_temp_dir();
     let path = dir.join(format!("{app_name}.port"));
     tracing::debug!("Reading port from {:?}", path);
 

@@ -493,7 +493,8 @@ impl StandardCodingAgentExecutor for CursorAgent {
         if config_files_found {
             AvailabilityInfo::InstallationFound
         } else {
-            AvailabilityInfo::NotFound
+            // Binary is found even without config files — still report as installed
+            AvailabilityInfo::InstallationFound
         }
     }
 }

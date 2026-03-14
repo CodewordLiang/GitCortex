@@ -368,6 +368,8 @@ export function wizardConfigToCreateRequest(
       ? config.basic.initialGoal?.trim() || undefined
       : undefined,
     useSlashCommands: config.commands.enabled,
+    // NOTE: commandPresetIds is accepted by CreateWorkflowRequest but currently
+    // unused by the backend — kept for forward-compatibility with planned preset filtering.
     commandPresetIds:
       config.commands.presetIds.length > 0
         ? config.commands.presetIds
@@ -386,25 +388,35 @@ export function wizardConfigToCreateRequest(
       model: orchestratorModel.modelId,
     },
     errorTerminalConfig: config.advanced.errorTerminal.enabled
-      ? {
-          cliTypeId: config.advanced.errorTerminal.cliTypeId!,
-          modelConfigId: config.advanced.errorTerminal.modelConfigId!,
-          modelConfig: toInlineModelConfig(
-            config.advanced.errorTerminal.modelConfigId
-          ),
-          customBaseUrl: null,
-          customApiKey: null,
-        }
+      ? (() => {
+          const errorModel = config.models.find(
+            (m) => m.id === config.advanced.errorTerminal.modelConfigId
+          );
+          return {
+            cliTypeId: config.advanced.errorTerminal.cliTypeId!,
+            modelConfigId: config.advanced.errorTerminal.modelConfigId!,
+            modelConfig: toInlineModelConfig(
+              config.advanced.errorTerminal.modelConfigId
+            ),
+            customBaseUrl: errorModel?.baseUrl || null,
+            customApiKey: errorModel?.apiKey || null,
+          };
+        })()
       : undefined,
-    mergeTerminalConfig: {
-      cliTypeId: config.advanced.mergeTerminal.cliTypeId,
-      modelConfigId: config.advanced.mergeTerminal.modelConfigId,
-      modelConfig: toInlineModelConfig(
-        config.advanced.mergeTerminal.modelConfigId
-      ),
-      customBaseUrl: null,
-      customApiKey: null,
-    },
+    mergeTerminalConfig: (() => {
+      const mergeModel = config.models.find(
+        (m) => m.id === config.advanced.mergeTerminal.modelConfigId
+      );
+      return {
+        cliTypeId: config.advanced.mergeTerminal.cliTypeId,
+        modelConfigId: config.advanced.mergeTerminal.modelConfigId,
+        modelConfig: toInlineModelConfig(
+          config.advanced.mergeTerminal.modelConfigId
+        ),
+        customBaseUrl: mergeModel?.baseUrl || null,
+        customApiKey: mergeModel?.apiKey || null,
+      };
+    })(),
     targetBranch: config.advanced.targetBranch,
     gitWatcherEnabled: config.advanced.gitWatcherEnabled,
     tasks,

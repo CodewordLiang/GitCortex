@@ -213,9 +213,12 @@ impl IntoResponse for ApiError {
             }
             _ => {
                 if status_code == StatusCode::INTERNAL_SERVER_ERROR {
+                    // [G35-003/G35-004] Log the full internal error for debugging but
+                    // return a generic message to the client to avoid leaking internals.
                     tracing::error!(error_type, error = %self, "Internal server error");
                     "Internal server error".to_string()
                 } else {
+                    // Non-500 errors are client-facing (4xx) and safe to expose the type.
                     format!("{error_type}: {self}")
                 }
             }

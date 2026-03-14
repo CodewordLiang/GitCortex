@@ -671,6 +671,12 @@ impl Workflow {
     /// prevent concurrent state regression. For critical transitions (e.g.
     /// starting→ready, ready→running), prefer dedicated CAS methods like
     /// `set_ready` or `set_started`.
+    /// Update workflow status.
+    ///
+    /// [G15-002] Terminal states (`completed`, `failed`, `cancelled`) are protected:
+    /// once a workflow reaches one of these states it cannot be overwritten by a
+    /// concurrent update. The WHERE clause excludes these final states so the UPDATE
+    /// is a no-op if the workflow has already been finalized.
     pub async fn update_status(pool: &SqlitePool, id: &str, status: &str) -> sqlx::Result<()> {
         let now = Utc::now();
         sqlx::query(
@@ -678,6 +684,7 @@ impl Workflow {
             UPDATE workflow
             SET status = ?, updated_at = ?
             WHERE id = ?
+              AND status NOT IN ('completed', 'failed', 'cancelled')
             ",
         )
         .bind(status)
@@ -952,6 +959,11 @@ impl WorkflowTask {
     /// the task is not already in a terminal state (completed/failed/cancelled)
     /// before calling, to prevent overwriting finalized results. For safe
     /// transitions, check `task.status` before invoking this method.
+    /// Update task status.
+    ///
+    /// [G15-003] Terminal states (`completed`, `failed`, `cancelled`) are protected:
+    /// once a task reaches one of these states it cannot be overwritten by a
+    /// concurrent update.
     pub async fn update_status(pool: &SqlitePool, id: &str, status: &str) -> sqlx::Result<()> {
         let now = Utc::now();
         sqlx::query(
@@ -959,6 +971,7 @@ impl WorkflowTask {
             UPDATE workflow_task
             SET status = ?, updated_at = ?
             WHERE id = ?
+              AND status NOT IN ('completed', 'failed', 'cancelled')
             ",
         )
         .bind(status)

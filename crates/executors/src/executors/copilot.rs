@@ -55,8 +55,12 @@ pub struct Copilot {
 }
 
 impl Copilot {
+    /// Package version for @github/copilot
+    const COPILOT_NPX_VERSION: &'static str = "0.0.375";
+
     fn build_command_builder(&self, log_dir: &str) -> CommandBuilder {
-        let mut builder = CommandBuilder::new("npx -y @github/copilot@0.0.375").params([
+        let base_cmd = format!("npx -y @github/copilot@{}", Self::COPILOT_NPX_VERSION);
+        let mut builder = CommandBuilder::new(&base_cmd).params([
             "--no-color",
             "--log-level",
             "debug",

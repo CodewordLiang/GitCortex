@@ -201,6 +201,9 @@ async fn test_terminal_full_lifecycle() {
 
     // Phase 3: Terminal Launch
     // ========================
+    // In production, the terminal_coordinator/runtime_actions calls set_starting
+    // before launch_terminal. We simulate that here.
+    Terminal::set_starting(&db.pool, &terminal_id).await.unwrap();
     let launch_result = launcher.launch_terminal(&terminal).await;
 
     // Verify launch result (may fail if CLI not installed, that's OK)

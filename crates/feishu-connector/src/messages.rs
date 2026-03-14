@@ -40,6 +40,13 @@ impl FeishuMessenger {
             .json::<serde_json::Value>()
             .await?;
 
+        // G32-005: Check Feishu API response code
+        let code = resp["code"].as_i64().unwrap_or(-1);
+        if code != 0 {
+            let msg = resp["msg"].as_str().unwrap_or("unknown error");
+            anyhow::bail!("Feishu send_text failed: code={code}, msg={msg}");
+        }
+
         let msg_id = resp["data"]["message_id"]
             .as_str()
             .unwrap_or_default()
@@ -66,6 +73,13 @@ impl FeishuMessenger {
             .await?
             .json::<serde_json::Value>()
             .await?;
+
+        // G32-005: Check Feishu API response code
+        let code = resp["code"].as_i64().unwrap_or(-1);
+        if code != 0 {
+            let msg = resp["msg"].as_str().unwrap_or("unknown error");
+            anyhow::bail!("Feishu reply_text failed: code={code}, msg={msg}");
+        }
 
         let msg_id = resp["data"]["message_id"]
             .as_str()
@@ -94,6 +108,13 @@ impl FeishuMessenger {
             .await?
             .json::<serde_json::Value>()
             .await?;
+
+        // G32-005: Check Feishu API response code
+        let code = resp["code"].as_i64().unwrap_or(-1);
+        if code != 0 {
+            let msg = resp["msg"].as_str().unwrap_or("unknown error");
+            anyhow::bail!("Feishu send_card failed: code={code}, msg={msg}");
+        }
 
         let msg_id = resp["data"]["message_id"]
             .as_str()

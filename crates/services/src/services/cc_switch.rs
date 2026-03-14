@@ -180,14 +180,20 @@ fn create_claude_settings(
     let settings_path = claude_home.join("settings.json");
 
     let mut env_obj = serde_json::Map::new();
-    env_obj.insert(
-        "ANTHROPIC_AUTH_TOKEN".to_string(),
-        serde_json::Value::String(api_key.to_string()),
-    );
-    env_obj.insert(
-        "ANTHROPIC_API_KEY".to_string(),
-        serde_json::Value::String(api_key.to_string()),
-    );
+    // Choose auth env var based on key format:
+    // - sk- prefix → direct API key, use ANTHROPIC_API_KEY only
+    // - otherwise → session/OAuth token, use ANTHROPIC_AUTH_TOKEN only
+    if api_key.starts_with("sk-") {
+        env_obj.insert(
+            "ANTHROPIC_API_KEY".to_string(),
+            serde_json::Value::String(api_key.to_string()),
+        );
+    } else {
+        env_obj.insert(
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            serde_json::Value::String(api_key.to_string()),
+        );
+    }
     env_obj.insert(
         "ANTHROPIC_MODEL".to_string(),
         serde_json::Value::String(model.to_string()),
@@ -268,41 +274,9 @@ fn create_gemini_env(
     Ok(())
 }
 
-/// Creates OpenCode config in isolated directory
-#[allow(dead_code)]
-fn create_opencode_config(
-    opencode_home: &Path,
-    base_url: Option<&str>,
-    model: &str,
-) -> anyhow::Result<()> {
-    let config_path = opencode_home.join("opencode.json");
-
-    let base_url_str = base_url.unwrap_or("https://api.openai.com/v1");
-
-    let config = serde_json::json!({
-        "$schema": "https://opencode.ai/config.json",
-        "provider": {
-            "openai": {
-                "options": {
-                    "baseURL": base_url_str,
-                    "apiKey": "{env:OPENAI_API_KEY}"
-                }
-            }
-        },
-        "model": format!("openai/{}", model)
-    });
-
-    let config_content = serde_json::to_string_pretty(&config)?;
-    std::fs::write(&config_path, config_content)
-        .map_err(|e| anyhow::anyhow!("Failed to write OpenCode config: {e}"))?;
-
-    tracing::debug!(
-        opencode_home = %opencode_home.display(),
-        "Created OpenCode config for authentication skip"
-    );
-
-    Ok(())
-}
+// NOTE: create_opencode_config was removed as dead code (G20-012).
+// OpenCode configuration is handled via environment variables at launch time,
+// not via config file creation.
 
 // ============================================================================
 // Auto-Confirm Parameters
@@ -332,6 +306,23 @@ fn apply_auto_confirm_args(cli: &CcCliType, args: &mut Vec<String>, auto_confirm
     }
 
     args.push(flag.to_string());
+}
+
+/// Sanitize a terminal ID for use in filesystem paths.
+///
+/// Replaces non-alphanumeric characters (except `-` and `_`) with `_` and
+/// truncates to 64 characters to prevent path traversal attacks.
+fn sanitize_terminal_id(id: &str) -> String {
+    id.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(64)
+        .collect()
 }
 
 /// CC-Switch trait for dependency injection and testing
@@ -624,18 +615,7 @@ impl CCSwitchService {
         match cli {
             CcCliType::ClaudeCode => {
                 // Create isolated Claude home directory
-                let safe_id: String = terminal
-                    .id
-                    .chars()
-                    .map(|c| {
-                        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                            c
-                        } else {
-                            '_'
-                        }
-                    })
-                    .take(64)
-                    .collect();
+                let safe_id = sanitize_terminal_id(&terminal.id);
                 let base_dir = std::env::temp_dir().join("gitcortex");
                 std::fs::create_dir_all(&base_dir).map_err(|e| {
                     anyhow::anyhow!(
@@ -779,7 +759,7 @@ impl CCSwitchService {
                     api_key_source = api_key_source,
                     has_custom_base_url = terminal.custom_base_url.is_some(),
                     custom_base_url = ?terminal.custom_base_url,
-                    api_key_prefix = &api_key[..api_key.len().min(10)],
+                    api_key_prefix = &api_key[..api_key.len().min(4)],
                     "Resolved API key for Claude Code terminal"
                 );
 
@@ -802,21 +782,28 @@ impl CCSwitchService {
 
                 // Create settings.json and force Claude CLI to load it via --settings.
                 // This prevents global ~/.claude/settings.json from overriding isolated auth config.
+                // Use effective_base_url (which considers orchestrator fallback) instead of just
+                // terminal-level URL, so the settings file reflects the actual endpoint in use.
                 if let Ok(settings_path) = create_claude_settings(
                     &claude_home,
                     &api_key,
-                    terminal.custom_base_url.as_deref(),
+                    effective_base_url.as_deref(),
                     &model,
                 ) {
                     args.push("--settings".to_string());
                     args.push(settings_path.to_string_lossy().to_string());
                 }
 
-                // Inject both token and API key to support different Claude runtime auth paths.
-                env.set
-                    .insert("ANTHROPIC_AUTH_TOKEN".to_string(), api_key.clone());
-                env.set
-                    .insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
+                // Inject auth env var based on key format:
+                // - sk- prefix → direct API key, use ANTHROPIC_API_KEY only
+                // - otherwise → session/OAuth token, use ANTHROPIC_AUTH_TOKEN only
+                if api_key.starts_with("sk-") {
+                    env.set
+                        .insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
+                } else {
+                    env.set
+                        .insert("ANTHROPIC_AUTH_TOKEN".to_string(), api_key.clone());
+                }
 
                 // Set model for all tiers
                 env.set.insert("ANTHROPIC_MODEL".to_string(), model.clone());
@@ -874,18 +861,7 @@ impl CCSwitchService {
 
                 // Create isolated CODEX_HOME directory for this terminal
                 // Sanitize terminal ID to prevent path traversal attacks
-                let safe_id: String = terminal
-                    .id
-                    .chars()
-                    .map(|c| {
-                        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                            c
-                        } else {
-                            '_'
-                        }
-                    })
-                    .take(64)
-                    .collect();
+                let safe_id = sanitize_terminal_id(&terminal.id);
                 let base_dir = std::env::temp_dir().join("gitcortex");
                 std::fs::create_dir_all(&base_dir).map_err(|e| {
                     anyhow::anyhow!(

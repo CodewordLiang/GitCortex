@@ -1,7 +1,7 @@
 use anyhow::Result;
 use reqwest::Client;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::types::{CachedToken, FeishuConfig, WsEndpointResponse};
 
@@ -9,6 +9,9 @@ pub struct FeishuAuth {
     config: FeishuConfig,
     http_client: Client,
     tenant_token: Arc<RwLock<Option<CachedToken>>>,
+    /// Serializes refresh calls to prevent TOCTOU races where multiple tasks
+    /// see an expired token and all issue concurrent refresh requests.
+    refresh_mutex: Mutex<()>,
 }
 
 impl FeishuAuth {
@@ -17,11 +20,25 @@ impl FeishuAuth {
             config,
             http_client: Client::new(),
             tenant_token: Arc::new(RwLock::new(None)),
+            refresh_mutex: Mutex::new(()),
         }
     }
 
     /// Get tenant access token, using cache if valid (refreshes 5 min before expiry)
     pub async fn get_tenant_token(&self) -> Result<String> {
+        // Fast path: check cache under read lock
+        {
+            let cached = self.tenant_token.read().await;
+            if let Some(ref token) = *cached {
+                if token.expires_at > std::time::Instant::now() + std::time::Duration::from_secs(300)
+                {
+                    return Ok(token.token.clone());
+                }
+            }
+        }
+        // Serialize refresh to prevent TOCTOU race (G32-001)
+        let _guard = self.refresh_mutex.lock().await;
+        // Double-check: another task may have refreshed while we waited
         {
             let cached = self.tenant_token.read().await;
             if let Some(ref token) = *cached {

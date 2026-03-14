@@ -47,8 +47,12 @@ pub struct Opencode {
 }
 
 impl Opencode {
+    /// Package version for opencode-ai
+    const OPENCODE_NPX_VERSION: &'static str = "1.1.3";
+
     fn build_command_builder(&self) -> CommandBuilder {
-        let builder = CommandBuilder::new("npx -y opencode-ai@1.1.3")
+        let base_cmd = format!("npx -y opencode-ai@{}", Self::OPENCODE_NPX_VERSION);
+        let builder = CommandBuilder::new(&base_cmd)
             // Pass hostname/port as separate args so OpenCode treats them as explicitly set
             // (it checks `process.argv.includes(\"--port\")` / `\"--hostname\"`).
             .extend_params(["serve", "--hostname", "127.0.0.1", "--port", "0"]);

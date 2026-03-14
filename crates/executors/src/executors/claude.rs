@@ -39,11 +39,16 @@ use crate::{
     stdout_dup::create_stdout_pipe_writer,
 };
 
-fn base_command(claude_code_router: bool) -> &'static str {
+/// Package version for @anthropic-ai/claude-code
+const CLAUDE_CODE_VERSION: &str = "2.1.2";
+/// Package version for @musistudio/claude-code-router
+const CLAUDE_CODE_ROUTER_VERSION: &str = "1.0.66";
+
+fn base_command(claude_code_router: bool) -> String {
     if claude_code_router {
-        "npx -y @musistudio/claude-code-router@1.0.66 code"
+        format!("npx -y @musistudio/claude-code-router@{CLAUDE_CODE_ROUTER_VERSION} code")
     } else {
-        "npx -y @anthropic-ai/claude-code@2.1.2"
+        format!("npx -y @anthropic-ai/claude-code@{CLAUDE_CODE_VERSION}")
     }
 }
 
@@ -85,12 +90,16 @@ impl ClaudeCode {
         }
 
         let mut builder =
-            CommandBuilder::new(base_command(self.claude_code_router.unwrap_or(false)))
+            CommandBuilder::new(&base_command(self.claude_code_router.unwrap_or(false)))
                 .params(["-p"]);
 
         let plan = self.plan.unwrap_or(false);
         let approvals = self.approvals.unwrap_or(false);
         if plan && approvals {
+            // When both plan and approvals are enabled, plan mode takes precedence.
+            // In plan mode, tools auto-approve except ExitPlanMode (which triggers approval).
+            // After ExitPlanMode, permission mode switches to BypassPermissions.
+            // The approvals hooks are NOT applied because get_hooks() checks plan first.
             tracing::warn!("Both plan and approvals are enabled. Plan will take precedence.");
         }
         if plan || approvals {
@@ -299,6 +308,9 @@ impl ClaudeCode {
                 let _ = log_writer
                     .log_raw(&format!("Error: Failed to initialize - {e}"))
                     .await;
+                // Drop protocol_peer to close stdin, which signals the child process to exit.
+                // The child was spawned with kill_on_drop(true) so it will be cleaned up.
+                drop(protocol_peer);
                 return;
             }
 
@@ -492,7 +504,7 @@ impl ClaudeLogProcessor {
                     timestamp: None,
                     entry_type: NormalizedEntryType::ErrorMessage { error_type: NormalizedEntryError::Other,
                     },
-                    content: "Claude Code + ANTHROPIC_API_KEY detected. Usage will be billed via Anthropic pay-as-you-go instead of your Claude subscription. If this is unintended, please select the `disable_api_key` checkbox in the conding-agent-configurations settings page.".to_string(),
+                    content: "Claude Code + ANTHROPIC_API_KEY detected. Usage will be billed via Anthropic pay-as-you-go instead of your Claude subscription. If this is unintended, please select the `disable_api_key` checkbox in the coding-agent-configurations settings page.".to_string(),
                     metadata: None,
                 })
             }
@@ -1182,12 +1194,18 @@ impl ClaudeLogProcessor {
                 }
             }
             ClaudeJson::Unknown { data } => {
+                let raw_json = serde_json::to_value(data).unwrap_or_default();
+                tracing::warn!(
+                    raw = %raw_json,
+                    "Unrecognized ClaudeJson variant encountered (untagged deserialization fallback). \
+                     This may indicate a new Claude CLI message type that needs explicit handling."
+                );
                 let entry = NormalizedEntry {
                     timestamp: None,
                     entry_type: NormalizedEntryType::SystemMessage,
                     content: format!(
                         "Unrecognized JSON message: {}",
-                        serde_json::to_value(data).unwrap_or_default()
+                        raw_json
                     ),
                     metadata: None,
                 };
@@ -2306,7 +2324,7 @@ mod tests {
         ));
         assert_eq!(
             entries[0].content,
-            "Claude Code + ANTHROPIC_API_KEY detected. Usage will be billed via Anthropic pay-as-you-go instead of your Claude subscription. If this is unintended, please select the `disable_api_key` checkbox in the conding-agent-configurations settings page."
+            "Claude Code + ANTHROPIC_API_KEY detected. Usage will be billed via Anthropic pay-as-you-go instead of your Claude subscription. If this is unintended, please select the `disable_api_key` checkbox in the coding-agent-configurations settings page."
         );
 
         // Test with managed API key source - should not generate warning

@@ -135,7 +135,13 @@ impl EventService {
                             None
                         }
                         Ok(other) => Some(Ok(other)), // Pass through non-patch messages
-                        Err(_) => None,               // Filter out broadcast errors
+                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                skipped = skipped,
+                                "tasks stream lagged, some events may have been lost"
+                            );
+                            None
+                        }
                     }
                 }
             });
@@ -344,7 +350,14 @@ impl EventService {
                             None
                         }
                         Ok(other) => Some(Ok(other)), // Pass through non-patch messages
-                        Err(_) => None,               // Filter out broadcast errors
+                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                skipped = skipped,
+                                session_id = %session_id,
+                                "execution_processes stream lagged, some events may have been lost"
+                            );
+                            None
+                        }
                     }
                 }
             });
@@ -423,7 +436,13 @@ impl EventService {
                             None
                         }
                         Ok(other) => Some(Ok(other)),
-                        Err(_) => None,
+                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                skipped = skipped,
+                                "scratch stream lagged, some events may have been lost"
+                            );
+                            None
+                        }
                     }
                 }
             });
@@ -512,7 +531,13 @@ impl EventService {
                         None
                     }
                     Ok(other) => Some(Ok(other)),
-                    Err(_) => None,
+                    Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            skipped = skipped,
+                            "workspaces stream lagged, some events may have been lost"
+                        );
+                        None
+                    }
                 }
             },
         );

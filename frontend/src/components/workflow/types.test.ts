@@ -119,8 +119,8 @@ describe('Workflow Types', () => {
         mergeTerminalConfig: {
           cliTypeId: 'claude-code',
           modelConfigId: 'model-1',
-          customBaseUrl: null,
-          customApiKey: null,
+          customBaseUrl: 'https://api.anthropic.com',
+          customApiKey: 'sk-ant-xxx',
           modelConfig: {
             displayName: 'Claude 3.5',
             modelId: 'claude-3-5-sonnet-20241022',

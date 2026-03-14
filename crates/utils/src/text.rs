@@ -1,13 +1,18 @@
+use std::sync::LazyLock;
+
 use regex::Regex;
 use uuid::Uuid;
+
+/// [G36-007] Compiled once and reused across calls.
+static GIT_BRANCH_SLUG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[^a-z0-9]+").expect("GIT_BRANCH_SLUG_RE must compile"));
 
 pub fn git_branch_id(input: &str) -> String {
     // 1. lowercase
     let lower = input.to_lowercase();
 
     // 2. replace non-alphanumerics with hyphens
-    let re = Regex::new(r"[^a-z0-9]+").unwrap();
-    let slug = re.replace_all(&lower, "-");
+    let slug = GIT_BRANCH_SLUG_RE.replace_all(&lower, "-");
 
     // 3. trim extra hyphens
     let trimmed = slug.trim_matches('-');

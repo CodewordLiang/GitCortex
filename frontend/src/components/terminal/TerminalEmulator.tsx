@@ -19,6 +19,7 @@ const AUTO_RECONNECT_MAX_ATTEMPTS = 5;
 const AUTO_RECONNECT_BASE_DELAY_MS = 1000;
 const WS_KEEPALIVE_INTERVAL_MS = 60_000;
 const WS_KEEPALIVE_MESSAGE = JSON.stringify({ type: 'heartbeat' });
+const PENDING_INPUT_MAX_SIZE = 1000;
 
 type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected';
 
@@ -142,7 +143,9 @@ export const TerminalEmulator = forwardRef<TerminalEmulatorRef, Props>(
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'input', data }));
       } else {
-        pendingInputRef.current.push(data);
+        if (pendingInputRef.current.length < PENDING_INPUT_MAX_SIZE) {
+          pendingInputRef.current.push(data);
+        }
       }
     }, [onData]);
 
@@ -245,6 +248,11 @@ export const TerminalEmulator = forwardRef<TerminalEmulatorRef, Props>(
         setConnectionState('connected');
         setDisconnectHint(null);
         logInfo('Terminal WebSocket connected');
+
+        // Clear xterm buffer on reconnection to avoid stale output before replay
+        if (wsKey > 0) {
+          terminalRef.current?.clear();
+        }
 
         clearKeepAliveTimer();
         keepAliveTimerRef.current = globalThis.setInterval(() => {

@@ -130,15 +130,15 @@ impl ClaudeAgentClient {
             self.handle_approval(latest_tool_use_id, tool_name, input)
                 .await
         } else {
-            // Auto approve tools with no matching tool_use_id
-            // tool_use_id is undocumented so this may not be possible
+            // Deny tools with no matching tool_use_id since we cannot track approval
+            // without an identifier. tool_use_id is undocumented so this may not be possible.
             tracing::warn!(
-                "No tool_use_id available for tool '{}', cannot request approval",
-                tool_name
+                tool_name = %tool_name,
+                "No tool_use_id available for tool, denying request (cannot request approval without identifier)"
             );
-            Ok(PermissionResult::Allow {
-                updated_input: input,
-                updated_permissions: None,
+            Ok(PermissionResult::Deny {
+                message: "Cannot approve tool without tool_use_id".to_string(),
+                interrupt: Some(false),
             })
         }
     }

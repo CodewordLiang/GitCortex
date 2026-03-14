@@ -100,6 +100,21 @@ impl CliDetector {
         let cmd = parts[0];
         let args = &parts[1..];
 
+        // Whitelist validation: only allow known CLI binary names to prevent command injection
+        // via crafted detect_command values when using `cmd /c` on Windows.
+        const ALLOWED_CLI_COMMANDS: &[&str] = &[
+            "claude", "gemini", "codex", "amp", "cursor", "cursor-agent",
+            "qwen", "gh", "opencode", "droid",
+        ];
+        if !ALLOWED_CLI_COMMANDS.iter().any(|&allowed| cmd == allowed) {
+            tracing::warn!(
+                cmd = cmd,
+                cli_type_id = %cli_type.id,
+                "Blocked detect_command with unrecognized binary name"
+            );
+            return Self::not_installed(cli_type);
+        }
+
         // Use extended PATH for detection
         let extended_path = Self::get_extended_path();
 

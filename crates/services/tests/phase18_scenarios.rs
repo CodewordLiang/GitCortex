@@ -525,7 +525,8 @@ async fn test_terminal_recovery_marks_waiting_as_failed() {
     let terminal_id = create_terminal(&db, &task_id, 0).await;
 
     // Simulate terminal left in "waiting" status (e.g., after crash)
-    // Note: set_started sets status to "waiting" (terminal is waiting for work)
+    // CAS requires not_started -> starting -> waiting transition
+    Terminal::set_starting(&db.pool, &terminal_id).await.unwrap();
     Terminal::set_started(&db.pool, &terminal_id).await.unwrap();
 
     // Verify terminal is in waiting state
@@ -582,6 +583,10 @@ async fn test_workflow_recovery_with_mixed_terminal_states() {
     let terminal3_id = create_terminal(&db, &task_id, 2).await;
 
     // Set different states: completed, waiting (orphaned), not_started
+    // CAS requires not_started -> starting -> waiting transition
+    Terminal::set_starting(&db.pool, &terminal1_id)
+        .await
+        .unwrap();
     Terminal::set_started(&db.pool, &terminal1_id)
         .await
         .unwrap();
@@ -589,6 +594,9 @@ async fn test_workflow_recovery_with_mixed_terminal_states() {
         .await
         .unwrap();
 
+    Terminal::set_starting(&db.pool, &terminal2_id)
+        .await
+        .unwrap();
     Terminal::set_started(&db.pool, &terminal2_id)
         .await
         .unwrap();

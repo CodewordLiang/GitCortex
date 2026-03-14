@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
-import { GitBranch, AlertTriangle, Check, RefreshCw, XCircle } from 'lucide-react';
+import {
+  GitBranch as GitBranchIcon,
+  Warning as WarningIcon,
+  CheckCircle as CheckIcon,
+  ArrowsClockwise as RefreshIcon,
+  XCircle as XCircleIcon,
+} from '@phosphor-icons/react';
 import { Field, FieldLabel, FieldError } from '../../ui-new/primitives/Field';
 import { InputField } from '../../ui-new/primitives/InputField';
 import { PrimaryButton } from '../../ui-new/primitives/PrimaryButton';
@@ -172,7 +178,7 @@ export const Step0Project: React.FC<Step0ProjectProps> = ({
         )}
         {apiError && (
           <div className="flex items-center gap-half text-sm text-error mt-half">
-            <XCircle className="size-icon-xs" />
+            <XCircleIcon className="size-icon-xs" />
             <span>{apiError}</span>
           </div>
         )}
@@ -191,12 +197,12 @@ export const Step0Project: React.FC<Step0ProjectProps> = ({
             <div className="flex items-center gap-base">
               {(() => {
                 if (isLoading) {
-                  return <RefreshCw className="size-icon-sm animate-spin text-low" />;
+                  return <RefreshIcon className="size-icon-sm animate-spin text-low" />;
                 }
                 if (gitStatus.isGitRepo) {
-                  return <Check className="size-icon-sm text-success" />;
+                  return <CheckIcon className="size-icon-sm text-success" />;
                 }
-                return <AlertTriangle className="size-icon-sm text-warning" />;
+                return <WarningIcon className="size-icon-sm text-warning" />;
               })()}
               <span className="text-base font-medium text-normal">
                 {gitStatus.isGitRepo
@@ -212,14 +218,14 @@ export const Step0Project: React.FC<Step0ProjectProps> = ({
               className="text-low hover:text-normal disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label={t('step0.refreshLabel')}
             >
-              <RefreshCw className="size-icon-sm" />
+              <RefreshIcon className="size-icon-sm" />
             </button>
           </div>
 
           {gitStatus.isGitRepo && (
             <div className="mt-base flex flex-col gap-half">
               <div className="flex items-center gap-half text-sm text-low">
-                <GitBranch className="size-icon-xs" />
+                <GitBranchIcon className="size-icon-xs" />
                 <span>
                   {t('step0.branchLabel')}:
                   <span className="text-normal font-mono">

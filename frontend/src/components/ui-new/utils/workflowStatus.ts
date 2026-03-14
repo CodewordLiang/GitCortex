@@ -99,6 +99,17 @@ const WORKFLOW_STATUS_CONFIG: Record<string, StatusConfig> = {
   },
 };
 
+/**
+ * Terminal status display configuration.
+ *
+ * Source of truth for terminal statuses is the backend Rust enum in
+ * `crates/db/src/models/terminal.rs` (and the generated `shared/types.ts`).
+ * Backend-produced statuses: not_started, starting, waiting, working,
+ * completed, failed, cancelled, killed, review_passed, review_rejected,
+ * quality_pending, checkpoint, paused, idle, waiting_for_approval, stalled.
+ *
+ * This config maps each known status to a display label, tone, and icon.
+ */
 const TERMINAL_STATUS_CONFIG: Record<string, StatusConfig> = {
   not_started: {
     key: 'workflow:terminalDebug.status.not_started',

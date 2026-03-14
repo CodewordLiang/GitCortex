@@ -248,6 +248,10 @@ async fn reconnect(
     if let Some(ref h) = *handle_guard {
         if let Err(e) = h.reconnect_tx.try_send(()) {
             tracing::warn!(error = %e, "Failed to send Feishu reconnect signal");
+            drop(handle_guard);
+            return Err(ApiError::Internal(format!(
+                "Failed to send reconnect signal: {e}"
+            )));
         }
     } else {
         return Err(ApiError::Conflict(

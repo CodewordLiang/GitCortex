@@ -8,6 +8,8 @@ export function validateStep0Project(config: WizardConfig): Record<string, strin
 
   if (!config.project.workingDirectory.trim()) {
     errors.workingDirectory = 'validation.project.workingDirectoryRequired';
+  } else if (!config.project.gitStatus.isGitRepo) {
+    errors.workingDirectory = 'validation.project.notGitRepo';
   }
 
   return errors;

@@ -25,6 +25,7 @@ describe('useWizardValidation', () => {
 
     const config = getDefaultWizardConfig();
     config.project.workingDirectory = '/valid/path';
+    config.project.gitStatus = { isGitRepo: true, isDirty: false };
 
     let errors: Record<string, string> = {};
     act(() => {

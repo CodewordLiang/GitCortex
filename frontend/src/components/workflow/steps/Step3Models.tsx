@@ -189,7 +189,7 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
       // Use modelStore to verify model connection
       const { verifyModel } = useModelStore.getState();
       const tempModel: ModelConfig = {
-        id: editingModel?.id ?? `temp-${Date.now()}`,
+        id: editingModel?.id ?? `temp-${crypto.randomUUID()}`,
         displayName: formData.displayName || 'Temp',
         cliTypeId: formData.cliTypeId,
         apiType: formData.apiType,
@@ -249,7 +249,7 @@ export const Step3Models: React.FC<Step3ModelsProps> = ({
     }
 
     const newModel: ModelConfig = {
-      id: editingModel?.id ?? `model-${Date.now()}`,
+      id: editingModel?.id ?? `model-${crypto.randomUUID()}`,
       displayName: formData.displayName,
       cliTypeId: formData.cliTypeId,
       apiType: formData.apiType,

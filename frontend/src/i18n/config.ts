@@ -16,16 +16,22 @@ import jaSettings from './locales/ja/settings.json';
 import jaProjects from './locales/ja/projects.json';
 import jaTasks from './locales/ja/tasks.json';
 import jaOrganization from './locales/ja/organization.json';
+import jaWorkflow from './locales/ja/workflow.json';
+import jaQuality from './locales/ja/quality.json';
 import esCommon from './locales/es/common.json';
 import esSettings from './locales/es/settings.json';
 import esProjects from './locales/es/projects.json';
 import esTasks from './locales/es/tasks.json';
 import esOrganization from './locales/es/organization.json';
+import esWorkflow from './locales/es/workflow.json';
+import esQuality from './locales/es/quality.json';
 import koCommon from './locales/ko/common.json';
 import koSettings from './locales/ko/settings.json';
 import koProjects from './locales/ko/projects.json';
 import koTasks from './locales/ko/tasks.json';
 import koOrganization from './locales/ko/organization.json';
+import koWorkflow from './locales/ko/workflow.json';
+import koQuality from './locales/ko/quality.json';
 import zhHansCommon from './locales/zh-Hans/common.json';
 import zhHansSettings from './locales/zh-Hans/settings.json';
 import zhHansProjects from './locales/zh-Hans/projects.json';
@@ -38,6 +44,8 @@ import zhHantSettings from './locales/zh-Hant/settings.json';
 import zhHantProjects from './locales/zh-Hant/projects.json';
 import zhHantTasks from './locales/zh-Hant/tasks.json';
 import zhHantOrganization from './locales/zh-Hant/organization.json';
+import zhHantWorkflow from './locales/zh-Hant/workflow.json';
+import zhHantQuality from './locales/zh-Hant/quality.json';
 
 const resources = {
   en: {
@@ -55,6 +63,8 @@ const resources = {
     projects: jaProjects,
     tasks: jaTasks,
     organization: jaOrganization,
+    workflow: jaWorkflow,
+    quality: jaQuality,
   },
   es: {
     common: esCommon,
@@ -62,6 +72,8 @@ const resources = {
     projects: esProjects,
     tasks: esTasks,
     organization: esOrganization,
+    workflow: esWorkflow,
+    quality: esQuality,
   },
   ko: {
     common: koCommon,
@@ -69,6 +81,8 @@ const resources = {
     projects: koProjects,
     tasks: koTasks,
     organization: koOrganization,
+    workflow: koWorkflow,
+    quality: koQuality,
   },
   'zh-Hans': {
     common: zhHansCommon,
@@ -85,6 +99,8 @@ const resources = {
     projects: zhHantProjects,
     tasks: zhHantTasks,
     organization: zhHantOrganization,
+    workflow: zhHantWorkflow,
+    quality: zhHantQuality,
   },
 };
 

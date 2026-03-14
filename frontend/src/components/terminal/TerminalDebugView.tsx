@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { TerminalEmulator, type TerminalEmulatorRef } from './TerminalEmulator';
 import { QualityBadge, type GateStatus } from '@/components/workflow/QualityBadge';
 import { QualityReportPanel } from '@/components/quality/QualityReportPanel';
@@ -56,6 +56,11 @@ export function TerminalDebugView({ tasks, wsUrl }: Readonly<Props>) {
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(null);
   const [isQualityPanelOpen, setIsQualityPanelOpen] = useState(false);
   const [historyByTerminalId, setHistoryByTerminalId] = useState<Record<string, TerminalHistoryState>>({});
+  // Refs are used intentionally here instead of useState to avoid unnecessary re-renders.
+  // These track transient process lifecycle state (ready, starting, autoStarted, needsRestart)
+  // that only matters for imperative logic (API calls, terminal launch decisions),
+  // not for rendering. Converting them to useState would cause render cascades
+  // on every terminal start/stop cycle without any visible UI benefit.
   const readyTerminalIdsRef = useRef<Set<string>>(new Set());
   const startingTerminalIdsRef = useRef<Set<string>>(new Set());
   const terminalRef = useRef<TerminalEmulatorRef>(null);
@@ -65,8 +70,11 @@ export function TerminalDebugView({ tasks, wsUrl }: Readonly<Props>) {
   const MAX_RESTART_ATTEMPTS = 3;
   const defaultRoleLabel = t('terminalCard.defaultRole');
 
-  const allTerminals = tasks.flatMap((task) =>
-    task.terminals.map((terminal) => ({ ...terminal, taskName: task.name }))
+  const allTerminals = useMemo(
+    () => tasks.flatMap((task) =>
+      task.terminals.map((terminal) => ({ ...terminal, taskName: task.name }))
+    ),
+    [tasks]
   );
 
   useEffect(() => {
@@ -137,10 +145,9 @@ export function TerminalDebugView({ tasks, wsUrl }: Readonly<Props>) {
         return true;
       }
 
-      return (
-        !['failed', 'not_started'].includes(terminal.status) &&
-        ['waiting', 'working', 'running', 'active'].includes(terminal.status)
-      );
+      // Only 'working' remains after filtering out historical, waiting, needsRestart,
+      // starting, and ready states above.
+      return terminal.status === 'working';
     },
     [isHistoricalTerminalStatus]
   );
@@ -536,6 +543,8 @@ export function TerminalDebugView({ tasks, wsUrl }: Readonly<Props>) {
                             </div>
                           );
                         } else if (currentHistory?.lines.length) {
+                          // TODO: Use virtualization (e.g., react-window) for large terminal logs
+                          // to avoid rendering thousands of lines into a single <pre> element.
                           return (
                             <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto pr-1">
                               <pre className="text-xs leading-5 whitespace-pre-wrap break-words text-foreground">

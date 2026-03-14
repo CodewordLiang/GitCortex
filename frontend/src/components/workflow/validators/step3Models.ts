@@ -16,6 +16,15 @@ export function validateStep3Models(config: WizardConfig): Record<string, string
     if (!model.cliTypeId?.trim()) {
       errors[`model-${modelKey}-cli`] = 'validation.terminals.cliRequired';
     }
+    if (!model.apiKey?.trim()) {
+      errors[`model-${modelKey}-apiKey`] = 'validation.models.apiKeyRequired';
+    }
+    if (!model.baseUrl?.trim()) {
+      errors[`model-${modelKey}-baseUrl`] = 'validation.models.baseUrlRequired';
+    }
+    if (!model.modelId?.trim()) {
+      errors[`model-${modelKey}-modelId`] = 'validation.models.modelIdRequired';
+    }
   });
 
   return errors;

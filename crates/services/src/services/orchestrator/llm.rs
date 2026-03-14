@@ -105,6 +105,21 @@ where
             .map_err(|_| anyhow::anyhow!("rate limit exceeded"))?;
         self.inner.chat(messages).await
     }
+
+    /// [G24-001] Transparent forwarding to inner client.
+    async fn provider_status(&self) -> Vec<ProviderStatusReport> {
+        self.inner.provider_status().await
+    }
+
+    /// [G24-001] Transparent forwarding to inner client.
+    async fn reset_provider(&self, provider_name: &str) -> bool {
+        self.inner.reset_provider(provider_name).await
+    }
+
+    /// [G24-001] Transparent forwarding to inner client.
+    async fn take_provider_events(&self) -> Vec<ProviderEvent> {
+        self.inner.take_provider_events().await
+    }
 }
 
 /// LLM client for OpenAI-compatible chat endpoints.
@@ -255,11 +270,14 @@ impl OpenAICompatibleClient {
         }
 
         let chat_response: ChatResponse = response.json().await?;
+        // [G24-005] Return an error when the API returns no choices instead of
+        // silently producing an empty string that downstream code cannot distinguish
+        // from a legitimate empty response.
         let content = chat_response
             .choices
             .first()
             .map(|c| c.message.content.clone())
-            .unwrap_or_default();
+            .ok_or_else(|| anyhow::anyhow!("LLM API returned empty choices array"))?;
 
         let usage = chat_response.usage.map(|u| LLMUsage {
             prompt_tokens: u.prompt_tokens,

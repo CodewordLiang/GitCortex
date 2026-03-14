@@ -1982,13 +1982,16 @@ impl OrchestratorAgent {
         event_id: &str,
     ) -> anyhow::Result<()> {
         // Update git_event status to processing
-        let _ = db::models::git_event::GitEvent::update_status(
+        if let Err(e) = db::models::git_event::GitEvent::update_status(
             &self.db.pool,
             event_id,
             "processing",
             None,
         )
-        .await;
+        .await
+        {
+            tracing::warn!(event_id = %event_id, error = %e, "Failed to update git_event status to processing");
+        }
 
         // Add to conversation history for context
         {
@@ -2019,13 +2022,16 @@ impl OrchestratorAgent {
                 reason,
                 "Skipping no-metadata commit because inference was ambiguous"
             );
-            let _ = db::models::git_event::GitEvent::update_status(
+            if let Err(e) = db::models::git_event::GitEvent::update_status(
                 &self.db.pool,
                 event_id,
                 "failed",
                 Some(reason),
             )
-            .await;
+            .await
+            {
+                tracing::warn!(event_id = %event_id, error = %e, "Failed to update git_event status to failed");
+            }
             return Ok(());
         };
 
@@ -2058,13 +2064,16 @@ impl OrchestratorAgent {
                 error = %err,
                 "Failed to handle no-metadata commit"
             );
-            let _ = db::models::git_event::GitEvent::update_status(
+            if let Err(e) = db::models::git_event::GitEvent::update_status(
                 &self.db.pool,
                 event_id,
                 "failed",
                 Some(&reason),
             )
-            .await;
+            .await
+            {
+                tracing::warn!(event_id = %event_id, error = %e, "Failed to update git_event status to failed after handling error");
+            }
             return Ok(());
         }
 
@@ -2073,13 +2082,16 @@ impl OrchestratorAgent {
             state.processed_commits.insert(commit_hash.to_string());
         }
 
-        let _ = db::models::git_event::GitEvent::update_status(
+        if let Err(e) = db::models::git_event::GitEvent::update_status(
             &self.db.pool,
             event_id,
             "processed",
             Some("Inferred terminal completion from no-metadata commit"),
         )
-        .await;
+        .await
+        {
+            tracing::warn!(event_id = %event_id, error = %e, "Failed to update git_event status to processed");
+        }
 
         tracing::info!(
             workflow_id = %workflow_id,
@@ -2218,7 +2230,11 @@ impl OrchestratorAgent {
             }
         }
 
-        if inferred_candidates.len() > 1 && task_hint.is_none() {
+        // G04-001: When task_hint exists but still matches multiple candidates,
+        // proceed with deterministic selection instead of returning None.
+        // This prevents orchestrator stalls when a task hint narrows candidates
+        // but doesn't reduce to exactly one.
+        if inferred_candidates.len() > 1 {
             let candidate_count = inferred_candidates.len();
             inferred_candidates.sort_by(|lhs, rhs| {
                 lhs.0
@@ -2990,6 +3006,17 @@ impl OrchestratorAgent {
                         "LLM failed {} consecutive times, provider may be exhausted",
                         count
                     );
+                    // G24-009: Mark workflow as failed after provider exhaustion,
+                    // not just an Error event, so the workflow doesn't hang indefinitely.
+                    if let Err(e2) = db::models::Workflow::update_status(
+                        &self.db.pool,
+                        &workflow_id,
+                        WORKFLOW_STATUS_FAILED,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %e2, "Failed to mark workflow as failed after LLM exhaustion");
+                    }
                     if let Err(e2) = self
                         .message_bus
                         .publish_workflow_event(
@@ -3003,6 +3030,19 @@ impl OrchestratorAgent {
                         .await
                     {
                         tracing::warn!(error = %e2, "Failed to publish LLM exhaustion error event");
+                    }
+                    if let Err(e2) = self
+                        .message_bus
+                        .publish_workflow_event(
+                            &workflow_id,
+                            BusMessage::StatusUpdate {
+                                workflow_id: workflow_id.clone(),
+                                status: WORKFLOW_STATUS_FAILED.to_string(),
+                            },
+                        )
+                        .await
+                    {
+                        tracing::warn!(error = %e2, "Failed to publish workflow failed status after LLM exhaustion");
                     }
                 }
 
@@ -3294,6 +3334,22 @@ impl OrchestratorAgent {
                     )
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to publish failure event: {e}"))?;
+
+                // G11-003: Also broadcast a StatusUpdate so the frontend can detect
+                // the workflow failure in real-time via the standard status channel.
+                if let Err(e) = self
+                    .message_bus
+                    .publish_workflow_event(
+                        &workflow_id,
+                        BusMessage::StatusUpdate {
+                            workflow_id: workflow_id.clone(),
+                            status: WORKFLOW_STATUS_FAILED.to_string(),
+                        },
+                    )
+                    .await
+                {
+                    tracing::warn!(error = %e, "Failed to publish workflow failed status update event");
+                }
 
                 // Transition to Idle
                 self.state.write().await.run_state = OrchestratorRunState::Idle;
@@ -3615,13 +3671,25 @@ impl OrchestratorAgent {
             );
             tracing::error!("{}", error_msg);
 
-            // Mark terminal as failed
-            let _ = db::models::Terminal::update_status(
+            // G11-009: Mark terminal as failed. If DB update fails, skip the broadcast
+            // to avoid broadcasting state that wasn't persisted.
+            if let Err(e) = db::models::Terminal::update_status(
                 &self.db.pool,
                 &active_terminal.id,
                 TERMINAL_STATUS_FAILED,
             )
-            .await;
+            .await
+            {
+                tracing::warn!(
+                    terminal_id = %active_terminal.id,
+                    error = %e,
+                    "Failed to mark terminal as failed in DB, skipping broadcast"
+                );
+                return Err(anyhow::anyhow!(
+                    "Terminal {} has no PTY session and DB update failed: {e}",
+                    active_terminal.id
+                ));
+            }
 
             // Broadcast terminal status update
             if let Err(e) = self
@@ -3640,8 +3708,11 @@ impl OrchestratorAgent {
             }
 
             // Mark task as failed
-            let _ =
-                db::models::WorkflowTask::update_status(&self.db.pool, task_id, "failed").await;
+            if let Err(e) =
+                db::models::WorkflowTask::update_status(&self.db.pool, task_id, "failed").await
+            {
+                tracing::warn!(task_id = %task_id, error = %e, "Failed to mark task as failed in DB");
+            }
 
             // Broadcast task status update
             if let Err(e) = self
@@ -3679,6 +3750,16 @@ impl OrchestratorAgent {
                 active_terminal.id
             ));
         };
+
+        // G15-006: The terminal CAS (waiting→working) and task status update below are
+        // not wrapped in a DB transaction. If the process crashes between the two writes,
+        // the terminal may be "working" while the task remains in its previous status.
+        // This is acceptable because:
+        //   1. The orchestrator recovery path (`recover_running_workflows`) rebuilds
+        //      in-memory state from the DB, which will detect the inconsistency.
+        //   2. SQLite single-writer serialization prevents concurrent dispatch races.
+        //   3. Wrapping in a transaction would require passing a transaction handle
+        //      through the CAS helper, adding significant complexity for a rare edge case.
 
         // 4. Update task status to running.
         db::models::WorkflowTask::update_status(&self.db.pool, task_id, "running")
@@ -3774,7 +3855,10 @@ impl OrchestratorAgent {
             .map(str::to_string);
 
         if let Some(session_id) = pty_session_id.as_deref() {
-            let _ = self
+            // G05-007: Send shutdown signals to both the session topic and the
+            // terminal.input topic so the PTY bridge receives them regardless of
+            // which topic it is subscribed to.
+            if let Err(e) = self
                 .message_bus
                 .publish(
                     session_id,
@@ -3785,12 +3869,31 @@ impl OrchestratorAgent {
                         decision: None,
                     },
                 )
+                .await
+            {
+                tracing::warn!(
+                    terminal_id = %terminal.id,
+                    error = %e,
+                    "Failed to publish Ctrl-C to session topic during completion shutdown"
+                );
+            }
+
+            // Also send to terminal.input topic for targeted delivery
+            self.message_bus
+                .publish_terminal_input(&terminal.id, session_id, "\u{3}", None)
                 .await;
 
-            let _ = self
+            if let Err(e) = self
                 .message_bus
                 .publish(session_id, BusMessage::Shutdown)
-                .await;
+                .await
+            {
+                tracing::warn!(
+                    terminal_id = %terminal.id,
+                    error = %e,
+                    "Failed to publish Shutdown to session topic during completion shutdown"
+                );
+            }
             tracing::info!(
                 terminal_id = %terminal.id,
                 workflow_id = %workflow_id,
@@ -3800,7 +3903,7 @@ impl OrchestratorAgent {
         }
 
         if let Some(pid) = terminal.process_id {
-            if let Err(error) = self.force_terminate_terminal_process(pid) {
+            if let Err(error) = self.force_terminate_terminal_process(pid).await {
                 tracing::warn!(
                     terminal_id = %terminal.id,
                     workflow_id = %workflow_id,
@@ -3841,7 +3944,7 @@ impl OrchestratorAgent {
         }
     }
 
-    fn force_terminate_terminal_process(&self, pid: i32) -> anyhow::Result<()> {
+    async fn force_terminate_terminal_process(&self, pid: i32) -> anyhow::Result<()> {
         if pid <= 0 {
             return Err(anyhow!("invalid process id: {pid}"));
         }
@@ -3858,7 +3961,9 @@ impl OrchestratorAgent {
 
             signal::kill(target_pid, Signal::SIGTERM)
                 .map_err(|e| anyhow!("failed to send SIGTERM to {}: {}", pid, e))?;
-            std::thread::sleep(std::time::Duration::from_millis(150));
+            // G05-008: Use tokio::time::sleep instead of std::thread::sleep
+            // to avoid blocking the async runtime.
+            sleep(Duration::from_millis(150)).await;
             let _ = signal::kill(target_pid, Signal::SIGKILL);
             return Ok(());
         }
@@ -4264,18 +4369,25 @@ impl OrchestratorAgent {
         Ok(())
     }
 
+    // G15-011: TOCTOU note — There is a small race window between reading workflow/task
+    // statuses and updating workflow status to "completed". A terminal could complete
+    // concurrently between the reads and the write, causing a premature completion.
+    // This is acceptable because:
+    //   1. The orchestrator event loop is single-threaded per workflow, so the only
+    //      concurrent writes come from the deferred completion spawned tasks.
+    //   2. SQLite single-writer ensures the status update is atomic.
+    //   3. If a terminal completes after the check, the next event loop iteration
+    //      will re-enter this method and the state will converge correctly.
     async fn auto_sync_workflow_completion(&self, workflow_id: &str) -> anyhow::Result<()> {
         let Some(workflow) = db::models::Workflow::find_by_id(&self.db.pool, workflow_id).await?
         else {
             return Ok(());
         };
 
+        // G14-005: Only auto-sync when workflow is in "running" status.
         // G04-004: Also exclude 'merging' status — the workflow is in the process
         // of merging branches and should not be auto-synced to completed.
-        if matches!(
-            workflow.status.as_str(),
-            WORKFLOW_STATUS_COMPLETED | WORKFLOW_STATUS_FAILED | WORKFLOW_STATUS_MERGING
-        ) {
+        if workflow.status != WORKFLOW_STATUS_RUNNING {
             return Ok(());
         }
 
@@ -4305,7 +4417,7 @@ impl OrchestratorAgent {
         db::models::Workflow::update_status(&self.db.pool, workflow_id, WORKFLOW_STATUS_COMPLETED)
             .await?;
 
-        let _ = self
+        if let Err(e) = self
             .message_bus
             .publish_workflow_event(
                 workflow_id,
@@ -4314,7 +4426,10 @@ impl OrchestratorAgent {
                     status: WORKFLOW_STATUS_COMPLETED.to_string(),
                 },
             )
-            .await;
+            .await
+        {
+            tracing::warn!(error = %e, "Failed to publish workflow completion status event");
+        }
 
         tracing::info!(
             workflow_id = %workflow_id,
@@ -4336,7 +4451,7 @@ impl OrchestratorAgent {
                         error = %e,
                         "Auto-merge failed, workflow remains completed but branches not merged"
                     );
-                    let _ = self
+                    if let Err(e) = self
                         .message_bus
                         .publish_workflow_event(
                             workflow_id,
@@ -4345,7 +4460,10 @@ impl OrchestratorAgent {
                                 error: format!("Auto-merge failed: {e}"),
                             },
                         )
-                        .await;
+                        .await
+                    {
+                        tracing::warn!(error = %e, "Failed to publish auto-merge failure event");
+                    }
                 }
             }
         }
@@ -4751,6 +4869,10 @@ impl OrchestratorAgent {
                     state.conversation_history.clone()
                 })
                 .await?;
+
+            // G24-002: Publish any provider state-change events that occurred
+            // during the direct chat() invocation (same as call_llm does).
+            self.publish_provider_events().await;
 
             // Add assistant response to conversation
             {

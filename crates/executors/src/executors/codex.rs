@@ -252,12 +252,15 @@ impl StandardCodingAgentExecutor for Codex {
 }
 
 impl Codex {
-    pub fn base_command() -> &'static str {
-        "npx -y @openai/codex@0.77.0"
+    /// Package version for @openai/codex
+    const CODEX_NPX_VERSION: &'static str = "0.77.0";
+
+    pub fn base_command() -> String {
+        format!("npx -y @openai/codex@{}", Self::CODEX_NPX_VERSION)
     }
 
     fn build_command_builder(&self) -> CommandBuilder {
-        let mut builder = CommandBuilder::new(Self::base_command());
+        let mut builder = CommandBuilder::new(&Self::base_command());
         builder = builder.extend_params(["app-server"]);
         if self.oss.unwrap_or(false) {
             builder = builder.extend_params(["--oss"]);

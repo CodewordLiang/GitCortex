@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { CaretLeft, CaretRight } from '@phosphor-icons/react';
 import { Field, FieldLabel, FieldError } from '../../ui-new/primitives/Field';
 import { cn } from '@/lib/utils';
 import type { TaskConfig } from '../types';
@@ -96,8 +96,8 @@ export const Step2Tasks: React.FC<Step2TasksProps> = ({
       // Append new empty tasks while keeping existing ones intact
       const additional: TaskConfig[] = Array.from(
         { length: taskCount - current.length },
-        (_, i) => ({
-          id: `task-${Date.now()}-${current.length + i}`,
+        () => ({
+          id: crypto.randomUUID(),
           name: '',
           description: '',
           branch: '',
@@ -220,7 +220,7 @@ export const Step2Tasks: React.FC<Step2TasksProps> = ({
               'border-border text-normal bg-secondary'
             )}
           >
-            <ChevronLeft size={16} />
+            <CaretLeft size={16} />
             {t('step2.previousTask')}
           </button>
 
@@ -244,7 +244,7 @@ export const Step2Tasks: React.FC<Step2TasksProps> = ({
             )}
           >
             {t('step2.nextTask')}
-            <ChevronRight size={16} />
+            <CaretRight size={16} />
           </button>
         </div>
       )}

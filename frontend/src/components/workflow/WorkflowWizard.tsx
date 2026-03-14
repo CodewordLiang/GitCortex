@@ -84,8 +84,8 @@ export function WorkflowWizard({
         config: {
           ...prev.config,
           tasks: needsTasks
-            ? Array.from({ length: prev.config.basic.taskCount }, (_, i) => ({
-                id: `task-${Date.now()}-${i}`,
+            ? Array.from({ length: prev.config.basic.taskCount }, (_, _i) => ({
+                id: crypto.randomUUID(),
                 name: '',
                 description: '',
                 branch: '',
@@ -184,9 +184,11 @@ export function WorkflowWizard({
     setCompletedSteps(newCompletedSteps);
 
     if (navigation.canGoNext()) {
+      validation.clearErrors();
       navigation.next();
+    } else {
+      validation.clearErrors();
     }
-    validation.clearErrors();
   };
 
   const handleBack = () => {

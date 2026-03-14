@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Check, X, AlertTriangle, RefreshCw } from 'lucide-react';
+import {
+  CaretLeft,
+  CaretRight,
+  Check as CheckPhosphor,
+  X as XPhosphor,
+  Warning as WarningPhosphor,
+  ArrowsClockwise,
+} from '@phosphor-icons/react';
 import { Field, FieldLabel, FieldError } from '../../ui-new/primitives/Field';
 import { ErrorAlert } from '../../ui-new/primitives/ErrorAlert';
 import { cn } from '@/lib/utils';
@@ -374,7 +381,7 @@ export const Step4Terminals: React.FC<Step4TerminalsProps> = ({
               'border-border text-normal bg-secondary'
             )}
           >
-            <ChevronLeft size={16} />
+            <CaretLeft size={16} />
             {t('step4.previousTask')}
           </button>
 
@@ -395,7 +402,7 @@ export const Step4Terminals: React.FC<Step4TerminalsProps> = ({
             )}
           >
             {t('step4.nextTask')}
-            <ChevronRight size={16} />
+            <CaretRight size={16} />
           </button>
         </div>
       )}
@@ -420,7 +427,7 @@ export const Step4Terminals: React.FC<Step4TerminalsProps> = ({
               'border-border text-low bg-panel'
             )}
           >
-            <RefreshCw className={cn('size-icon-sm', isRefreshing && 'animate-spin')} />
+            <ArrowsClockwise className={cn('size-icon-sm', isRefreshing && 'animate-spin')} />
             {t('step4.refreshCli', { defaultValue: 'Refresh' })}
           </button>
         </div>
@@ -435,9 +442,9 @@ export const Step4Terminals: React.FC<Step4TerminalsProps> = ({
               >
                 <div className="flex items-center gap-base">
                   {cli.installed ? (
-                    <Check className="size-icon-sm text-success" strokeWidth={3} />
+                    <CheckPhosphor className="size-icon-sm text-success" weight="bold" />
                   ) : (
-                    <X className="size-icon-sm text-error" strokeWidth={3} />
+                    <XPhosphor className="size-icon-sm text-error" weight="bold" />
                   )}
                   <span className="text-base text-normal">{cli.displayName}</span>
                 </div>
@@ -476,7 +483,7 @@ export const Step4Terminals: React.FC<Step4TerminalsProps> = ({
                 {/* Warning if CLI is not installed */}
                 {terminal.cliTypeId && !cliTypes.find((ct) => ct.id === terminal.cliTypeId)?.installed && (
                   <div className="mb-base flex items-start gap-half p-base border border-warning bg-warning/10 rounded-sm">
-                    <AlertTriangle className="size-icon-sm text-warning shrink-0 mt-quarter" />
+                    <WarningPhosphor className="size-icon-sm text-warning shrink-0 mt-quarter" />
                     <div className="flex-1">
                       <div className="text-base text-warning font-medium mb-quarter">
                         {t('step4.cliNotInstalledTitle')}
@@ -505,9 +512,9 @@ export const Step4Terminals: React.FC<Step4TerminalsProps> = ({
                       )}
                     >
                       {cli.installed ? (
-                        <Check className="size-icon-sm text-success" strokeWidth={3} />
+                        <CheckPhosphor className="size-icon-sm text-success" weight="bold" />
                       ) : (
-                        <X className="size-icon-sm text-error" strokeWidth={3} />
+                        <XPhosphor className="size-icon-sm text-error" weight="bold" />
                       )}
                       {cli.displayName}
                     </button>

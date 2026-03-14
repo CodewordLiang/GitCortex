@@ -250,7 +250,13 @@ export const handleApiResponse = async <T, E = T>(
     return undefined as T;
   }
 
-  const result: ApiResponse<T, E> = await response.json();
+  let result: ApiResponse<T, E>;
+  try {
+    result = await response.json();
+  } catch {
+    // Non-JSON success response — return undefined as T
+    return undefined as T;
+  }
 
   if (!result.success) {
     // Check for error_data first (structured errors), then fall back to message
@@ -1108,20 +1114,13 @@ export const imagesApi = {
     const formData = new FormData();
     formData.append('image', file);
 
+    // Use fetch directly for multipart/form-data (makeRequest sets JSON content-type),
+    // but delegate error handling to handleApiResponse for consistency.
     const response = await fetch('/api/images/upload', {
       method: 'POST',
       body: formData,
       credentials: 'include',
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new ApiError(
-        `Failed to upload image: ${errorText}`,
-        response.status,
-        response
-      );
-    }
 
     return handleApiResponse<ImageResponse>(response);
   },
@@ -1135,15 +1134,6 @@ export const imagesApi = {
       body: formData,
       credentials: 'include',
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new ApiError(
-        `Failed to upload image: ${errorText}`,
-        response.status,
-        response
-      );
-    }
 
     return handleApiResponse<ImageResponse>(response);
   },
@@ -1167,15 +1157,6 @@ export const imagesApi = {
         credentials: 'include',
       }
     );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new ApiError(
-        `Failed to upload image: ${errorText}`,
-        response.status,
-        response
-      );
-    }
 
     return handleApiResponse<ImageResponse>(response);
   },
@@ -1241,13 +1222,7 @@ export const oauthApi = {
     const response = await makeRequest('/api/auth/logout', {
       method: 'POST',
     });
-    if (!response.ok) {
-      throw new ApiError(
-        `Logout failed with status ${response.status}`,
-        response.status,
-        response
-      );
-    }
+    return handleApiResponse<void>(response);
   },
 
   /** Returns the current access token for the remote server (auto-refreshes if needed) */

@@ -24,6 +24,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use utils::response::ApiResponse;
+use uuid::Uuid;
 
 use crate::{
     DeploymentImpl,
@@ -367,7 +368,7 @@ async fn handle_chat_event(
     let ResponseJson(api_response) = submit_orchestrator_chat(
         State(deployment),
         headers,
-        Path(binding.workflow_id.clone()),
+        Path(Uuid::parse_str(&binding.workflow_id).map_err(|e| ApiError::BadRequest(format!("Invalid workflow ID: {e}")))?),
         Json(submit_payload),
     )
     .await?;

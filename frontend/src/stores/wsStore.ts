@@ -962,10 +962,28 @@ export const useWsStore = create<WsState>((set, get) => ({
           executeMessageHandlers(globalHandlers, normalizedPayload, message.type, targetWorkflowId, 'Global');
           executeMessageHandlers(scopedHandlers, normalizedPayload, message.type, targetWorkflowId, 'Workflow');
         } catch (error) {
+          // Structured error logging for message parse failures
+          const errorMessage = error instanceof Error ? error.message : 'Unknown parse error';
           console.error(
-            `[wsStore] Failed to parse inbound message for workflow "${targetWorkflowId}"`,
-            error
+            `[wsStore] Failed to parse inbound message for workflow "${targetWorkflowId}":`,
+            errorMessage
           );
+          // Notify system.error subscribers of the parse failure
+          const parseErrorHandlers = get()._handlers.get('system.error');
+          if (parseErrorHandlers) {
+            const parseErrorPayload: SystemErrorPayload = {
+              workflowId: targetWorkflowId,
+              error: 'message_parse_failed',
+              message: errorMessage,
+            };
+            parseErrorHandlers.forEach((handler) => {
+              try {
+                handler(parseErrorPayload);
+              } catch (handlerErr) {
+                console.error('[wsStore] system.error handler failed', handlerErr);
+              }
+            });
+          }
         }
       };
     };
@@ -1082,6 +1100,26 @@ export const useWsStore = create<WsState>((set, get) => ({
         lastHeartbeat: aggregateLastHeartbeat(disconnectedConnections),
         reconnectAttempts: aggregateReconnectAttempts(disconnectedConnections),
       });
+
+      // Notify subscribers that reconnection has been exhausted
+      console.error(
+        `[wsStore] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached for workflow "${targetWorkflowId}"`
+      );
+      const errorHandlers = get()._handlers.get('system.error');
+      if (errorHandlers) {
+        const errorPayload: SystemErrorPayload = {
+          workflowId: targetWorkflowId,
+          error: 'max_reconnect_exceeded',
+          message: `WebSocket reconnection failed after ${MAX_RECONNECT_ATTEMPTS} attempts`,
+        };
+        errorHandlers.forEach((handler) => {
+          try {
+            handler(errorPayload);
+          } catch (err) {
+            console.error('[wsStore] system.error handler failed', err);
+          }
+        });
+      }
     };
 
     // Helper: Handle WebSocket close event
@@ -1169,6 +1207,21 @@ export const useWsStore = create<WsState>((set, get) => ({
       ws.onerror = () => {
         if (isStale()) return;
         console.error(`[wsStore] WebSocket error on workflow "${targetWorkflowId}"`);
+
+        // Update connection status to reflect the error
+        const errorConnections = new Map(get()._workflowConnections);
+        const errConn = errorConnections.get(targetWorkflowId);
+        if (errConn?.ws === ws) {
+          errorConnections.set(targetWorkflowId, {
+            ...errConn,
+            status: 'reconnecting',
+          });
+          set({
+            _workflowConnections: errorConnections,
+            workflowConnectionStatus: toWorkflowConnectionStatusRecord(errorConnections),
+            connectionStatus: aggregateConnectionStatus(errorConnections),
+          });
+        }
       };
     };
 
@@ -1262,6 +1315,8 @@ export const useWsStore = create<WsState>((set, get) => ({
       currentWorkflowId: null,
       _ws: null,
       _workflowConnections: new Map(),
+      _handlers: new Map(),
+      _workflowHandlers: new Map(),
       _heartbeatInterval: null,
       _reconnectTimeout: null,
       _url: null,
@@ -1316,6 +1371,11 @@ export const useWsStore = create<WsState>((set, get) => ({
     });
   },
 
+  // Design decision: _handlers and _workflowHandlers are mutated directly
+  // (bypassing Zustand's set()) because they are internal subscription registries
+  // that don't drive React renders. Routing through set() would trigger unnecessary
+  // re-renders on every subscribe/unsubscribe call. Only connection-status fields
+  // go through set() since those are consumed by React components.
   subscribe: (eventType: string, handler: MessageHandler) => {
     const handlers = get()._handlers;
 
@@ -1497,11 +1557,15 @@ export type WorkflowEventHandlers = {
   onGitCommitDetected?: (payload: GitCommitPayload) => void;
   onQualityGateResult?: (payload: QualityGateResultPayload) => void;
   onSystemError?: (payload: SystemErrorPayload) => void;
+  onSystemLagged?: (payload: SystemLaggedPayload) => void;
 } & Record<string, unknown>;
 
 /**
  * Hook to connect to workflow events and subscribe to specific event types
  * Automatically connects on mount and disconnects on unmount
+ *
+ * Uses useRef internally to cache handlers, avoiding unsubscribe/resubscribe
+ * churn when callers pass unstable handler references (e.g. inline callbacks).
  */
 export function useWorkflowEvents(
   workflowId: string | null | undefined,
@@ -1516,6 +1580,12 @@ export function useWorkflowEvents(
       : s.connectionStatus
   );
 
+  // Cache handlers in a ref so subscriptions remain stable across renders
+  const handlersRef = React.useRef(handlers);
+  React.useEffect(() => {
+    handlersRef.current = handlers;
+  });
+
   // Connect to workflow on mount, disconnect on unmount
   React.useEffect(() => {
     if (workflowId) {
@@ -1529,98 +1599,36 @@ export function useWorkflowEvents(
     };
   }, [workflowId, connectToWorkflow, disconnectWorkflow]);
 
-  // Subscribe to events
+  // Subscribe to events — stable subscriptions via handlersRef
   React.useEffect(() => {
     if (!workflowId) return;
 
     const unsubscribers: (() => void)[] = [];
 
-    if (handlers?.onWorkflowStatusChanged) {
-      unsubscribers.push(
-        subscribeToWorkflow(
-          workflowId,
-          'workflow.status_changed',
-          handlers.onWorkflowStatusChanged as MessageHandler
-        )
-      );
-    }
+    const eventMap: Array<[keyof WorkflowEventHandlers, string]> = [
+      ['onWorkflowStatusChanged', 'workflow.status_changed'],
+      ['onTerminalStatusChanged', 'terminal.status_changed'],
+      ['onTaskStatusChanged', 'task.status_changed'],
+      ['onTerminalCompleted', 'terminal.completed'],
+      ['onTerminalPromptDetected', 'terminal.prompt_detected'],
+      ['onTerminalPromptDecision', 'terminal.prompt_decision'],
+      ['onGitCommitDetected', 'git.commit_detected'],
+      ['onQualityGateResult', 'quality.gate_result'],
+      ['onSystemError', 'system.error'],
+      ['onSystemLagged', 'system.lagged'],
+    ];
 
-    if (handlers?.onTerminalStatusChanged) {
+    for (const [handlerKey, eventType] of eventMap) {
       unsubscribers.push(
         subscribeToWorkflow(
           workflowId,
-          'terminal.status_changed',
-          handlers.onTerminalStatusChanged as MessageHandler
-        )
-      );
-    }
-
-    if (handlers?.onTaskStatusChanged) {
-      unsubscribers.push(
-        subscribeToWorkflow(
-          workflowId,
-          'task.status_changed',
-          handlers.onTaskStatusChanged as MessageHandler
-        )
-      );
-    }
-
-    if (handlers?.onTerminalCompleted) {
-      unsubscribers.push(
-        subscribeToWorkflow(
-          workflowId,
-          'terminal.completed',
-          handlers.onTerminalCompleted as MessageHandler
-        )
-      );
-    }
-
-    if (handlers?.onTerminalPromptDetected) {
-      unsubscribers.push(
-        subscribeToWorkflow(
-          workflowId,
-          'terminal.prompt_detected',
-          handlers.onTerminalPromptDetected as MessageHandler
-        )
-      );
-    }
-
-    if (handlers?.onTerminalPromptDecision) {
-      unsubscribers.push(
-        subscribeToWorkflow(
-          workflowId,
-          'terminal.prompt_decision',
-          handlers.onTerminalPromptDecision as MessageHandler
-        )
-      );
-    }
-
-    if (handlers?.onGitCommitDetected) {
-      unsubscribers.push(
-        subscribeToWorkflow(
-          workflowId,
-          'git.commit_detected',
-          handlers.onGitCommitDetected as MessageHandler
-        )
-      );
-    }
-
-    if (handlers?.onQualityGateResult) {
-      unsubscribers.push(
-        subscribeToWorkflow(
-          workflowId,
-          'quality.gate_result',
-          handlers.onQualityGateResult as MessageHandler
-        )
-      );
-    }
-
-    if (handlers?.onSystemError) {
-      unsubscribers.push(
-        subscribeToWorkflow(
-          workflowId,
-          'system.error',
-          handlers.onSystemError as MessageHandler
+          eventType,
+          ((payload: unknown) => {
+            const fn = handlersRef.current?.[handlerKey];
+            if (typeof fn === 'function') {
+              (fn as MessageHandler)(payload);
+            }
+          }) as MessageHandler
         )
       );
     }
@@ -1628,7 +1636,8 @@ export function useWorkflowEvents(
     return () => {
       unsubscribers.forEach((unsub) => unsub());
     };
-  }, [workflowId, handlers, subscribeToWorkflow]);
+    // Only re-subscribe when workflowId changes — handlers are read from ref
+  }, [workflowId, subscribeToWorkflow]);
 
   return { connectionStatus };
 }

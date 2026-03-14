@@ -590,6 +590,18 @@ pub fn validate_create_request(req: &CreateWorkflowRequest) -> Result<(), ApiErr
         }
     }
 
+    // G01-002: Validate merge_terminal_config has non-empty cli_type_id and model_config_id
+    if req.merge_terminal_config.cli_type_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "mergeTerminalConfig.cliTypeId is required".to_string(),
+        ));
+    }
+    if req.merge_terminal_config.model_config_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "mergeTerminalConfig.modelConfigId is required".to_string(),
+        ));
+    }
+
     // Validate commands if provided
     if let Some(ref commands) = req.commands {
         for (cmd_index, cmd) in commands.iter().enumerate() {
@@ -937,9 +949,13 @@ async fn create_workflow(
         .await
         .map_err(|e| ApiError::BadRequest(format!("Failed to create workflow: {e}")))?;
 
-    // 4. Create slash command associations (after workflow exists)
+    // 4. Create slash command associations inside a transaction (G01-003)
     let mut commands: Vec<WorkflowCommand> = Vec::new();
     if let Some(command_reqs) = req.commands {
+        let mut tx = deployment.db().pool.begin().await.map_err(|e| {
+            ApiError::Internal(format!("Failed to begin command transaction: {e}"))
+        })?;
+
         for (index, cmd_req) in command_reqs.iter().enumerate() {
             let index = i32::try_from(index)
                 .map_err(|_| ApiError::BadRequest("Command index overflow".to_string()))?;
@@ -957,15 +973,29 @@ async fn create_workflow(
                 }
             }
 
-            WorkflowCommand::create(
-                &deployment.db().pool,
-                &workflow_id,
-                &cmd_req.preset_id,
-                index,
-                cmd_req.custom_params.as_deref(),
+            let cmd_id = Uuid::new_v4().to_string();
+            let now = chrono::Utc::now();
+            sqlx::query(
+                r"
+                INSERT INTO workflow_command (id, workflow_id, preset_id, order_index, custom_params, created_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ",
             )
-            .await?;
+            .bind(&cmd_id)
+            .bind(&workflow_id)
+            .bind(&cmd_req.preset_id)
+            .bind(index)
+            .bind(cmd_req.custom_params.as_deref())
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to create workflow command: {e}")))?;
         }
+
+        tx.commit().await.map_err(|e| {
+            ApiError::Internal(format!("Failed to commit command transaction: {e}"))
+        })?;
+
         commands = WorkflowCommand::find_by_workflow(&deployment.db().pool, &workflow_id).await?;
     }
 
@@ -1003,8 +1033,9 @@ async fn create_workflow(
 /// Get workflow details
 async fn get_workflow(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
 ) -> Result<ResponseJson<ApiResponse<WorkflowDetailDto>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     // Get workflow
     let workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
         .await?
@@ -1047,8 +1078,9 @@ async fn get_workflow(
 /// Delete workflow
 async fn delete_workflow(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     stop_workflow_runtime_if_running(
         &deployment,
         &workflow_id,
@@ -1065,15 +1097,32 @@ async fn delete_workflow(
 /// Update workflow status
 async fn update_workflow_status(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
     Json(req): Json<UpdateWorkflowStatusRequest>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     let workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("Workflow not found".to_string()))?;
 
     let target_status = req.status.trim().to_string();
     validate_workflow_status_transition(&workflow.status, &target_status)?;
+
+    // G16-012: Block sensitive transitions that must go through dedicated endpoints
+    let protected_transitions: &[(&str, &str, &str)] = &[
+        ("created", "starting", "Use POST /prepare instead"),
+        ("failed", "starting", "Use POST /prepare instead"),
+        ("ready", "running", "Use POST /start instead"),
+        ("paused", "running", "Use POST /start instead"),
+        ("completed", "merging", "Use POST /merge instead"),
+    ];
+    for &(from, to, hint) in protected_transitions {
+        if workflow.status == from && target_status == to {
+            return Err(ApiError::Conflict(format!(
+                "Transition '{from}' -> '{to}' is not allowed via status endpoint. {hint}"
+            )));
+        }
+    }
 
     Workflow::update_status(&deployment.db().pool, &workflow_id, &target_status).await?;
     Ok(ResponseJson(ApiResponse::success(())))
@@ -1312,23 +1361,40 @@ async fn refresh_prompt_watcher_registrations(deployment: &DeploymentImpl, workf
 /// then transitions the workflow to "ready" status for user confirmation before execution.
 async fn prepare_workflow(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     // Check workflow exists
     let workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("Workflow not found".to_string()))?;
 
     // Verify workflow is in "created" or "failed" status (can retry failed workflows)
+    // G16-006: Use CAS to prevent concurrent prepare calls
     if workflow.status != "created" && workflow.status != "failed" {
-        return Err(ApiError::BadRequest(format!(
+        return Err(ApiError::Conflict(format!(
             "Cannot prepare workflow: current status is '{}', expected 'created' or 'failed'",
             workflow.status
         )));
     }
 
-    // Update status to "starting"
-    Workflow::update_status(&deployment.db().pool, &workflow_id, "starting").await?;
+    // CAS: atomically transition to "starting" only from expected statuses
+    let cas_result = sqlx::query(
+        r"
+        UPDATE workflow
+        SET status = 'starting', updated_at = datetime('now')
+        WHERE id = ? AND status IN ('created', 'failed')
+        ",
+    )
+    .bind(&workflow_id)
+    .execute(&deployment.db().pool)
+    .await?;
+
+    if cas_result.rows_affected() == 0 {
+        return Err(ApiError::Conflict(
+            "Cannot prepare workflow: status changed concurrently".to_string(),
+        ));
+    }
 
     // Create services for terminal coordination
     // Note: Model configuration is now handled at spawn time via environment variable injection,
@@ -1476,8 +1542,9 @@ async fn prepare_workflow(
 /// Start workflow (user confirmed) or resume from paused state
 async fn start_workflow(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     // Check workflow exists
     let mut workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
         .await?
@@ -1485,6 +1552,7 @@ async fn start_workflow(
 
     // Recover stale workflow status after restart: DB may still be `running`
     // while runtime instance is no longer active.
+    // G16-007: Use CAS to atomically transition running → paused only when runtime is inactive
     if workflow.status == "running"
         && !deployment
             .orchestrator_runtime()
@@ -1495,7 +1563,22 @@ async fn start_workflow(
             workflow_id = %workflow_id,
             "Workflow marked running but runtime is not active; recovering to paused"
         );
-        Workflow::update_status(&deployment.db().pool, &workflow_id, "paused").await?;
+        let cas_result = sqlx::query(
+            r"
+            UPDATE workflow
+            SET status = 'paused', updated_at = datetime('now')
+            WHERE id = ? AND status = 'running'
+            ",
+        )
+        .bind(&workflow_id)
+        .execute(&deployment.db().pool)
+        .await?;
+
+        if cas_result.rows_affected() == 0 {
+            return Err(ApiError::Conflict(
+                "Cannot start workflow: status changed concurrently during stale-state recovery".to_string(),
+            ));
+        }
         workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
             .await?
             .ok_or_else(|| ApiError::NotFound("Workflow not found".to_string()))?;
@@ -1526,11 +1609,26 @@ async fn start_workflow(
 
             Workflow::update_status(&deployment.db().pool, &workflow_id, "created").await?;
 
-            let _ = prepare_workflow(State(deployment.clone()), Path(workflow_id.clone())).await?;
+            // G03-002: Wrap re-prepare error with descriptive context
+            let _ = prepare_workflow(State(deployment.clone()), Path(Uuid::parse_str(&workflow_id).map_err(|e| ApiError::BadRequest(format!("Invalid workflow ID: {e}")))?))
+                .await
+                .map_err(|e| {
+                    ApiError::Internal(format!(
+                        "Start-phase re-prepare failed for workflow {workflow_id}: {e}"
+                    ))
+                })?;
 
+            // G03-003: Verify workflow status is back to "ready" after re-prepare
             workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
                 .await?
                 .ok_or_else(|| ApiError::NotFound("Workflow not found".to_string()))?;
+
+            if workflow.status != "ready" {
+                return Err(ApiError::Internal(format!(
+                    "Re-prepare did not restore workflow to 'ready' status (current: '{}')",
+                    workflow.status
+                )));
+            }
         }
     }
 
@@ -1598,8 +1696,9 @@ async fn start_workflow(
 /// Pause a running workflow
 async fn pause_workflow(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     // Check workflow exists
     let workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
         .await?
@@ -1655,15 +1754,16 @@ async fn pause_workflow(
 /// Stop a workflow and mark as cancelled
 async fn stop_workflow(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     // Check workflow exists
     let workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("Workflow not found".to_string()))?;
 
-    // Allow stopping from starting/running/paused
-    let valid_statuses = ["starting", "running", "paused"];
+    // Allow stopping from ready/starting/running/paused (G16-009: added "ready")
+    let valid_statuses = ["ready", "starting", "running", "paused"];
     if !valid_statuses.contains(&workflow.status.as_str()) {
         return Err(ApiError::BadRequest(format!(
             "Cannot stop workflow: current status is '{}', expected one of: {:?}",
@@ -1761,9 +1861,10 @@ async fn cleanup_workflow_terminals(
 /// Create a new runtime task inside an existing workflow
 async fn create_runtime_task(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
     Json(req): Json<CreateRuntimeTaskRequest>,
 ) -> Result<ResponseJson<ApiResponse<WorkflowTask>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     let workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("Workflow not found".to_string()))?;
@@ -1847,9 +1948,10 @@ async fn create_runtime_task(
 /// Create a new runtime terminal inside an existing task
 async fn create_runtime_terminal(
     State(deployment): State<DeploymentImpl>,
-    Path((workflow_id, task_id)): Path<(String, String)>,
+    Path((workflow_id, task_id)): Path<(Uuid, String)>,
     Json(req): Json<CreateRuntimeTerminalRequest>,
 ) -> Result<ResponseJson<ApiResponse<Terminal>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     let workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("Workflow not found".to_string()))?;
@@ -1947,7 +2049,7 @@ async fn create_runtime_terminal(
         .map_err(|e| ApiError::Internal(format!("Failed to create terminal: {e}")))?;
 
     let terminal = if req.start_immediately {
-        let _ = start_terminal(State(deployment.clone()), Path(created_terminal.id.clone())).await?;
+        let _ = start_terminal(State(deployment.clone()), Path(Uuid::parse_str(&created_terminal.id).map_err(|e| ApiError::Internal(format!("Invalid terminal ID: {e}")))?)).await?;
         Terminal::find_by_id(&deployment.db().pool, &created_terminal.id)
             .await?
             .ok_or_else(|| ApiError::NotFound("Terminal not found after start".to_string()))?
@@ -2017,8 +2119,9 @@ async fn recover_workflows(
 /// List workflow tasks
 async fn list_workflow_tasks(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
 ) -> Result<ResponseJson<ApiResponse<Vec<WorkflowTaskDetailResponse>>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     let tasks = WorkflowTask::find_by_workflow(&deployment.db().pool, &workflow_id).await?;
     let mut task_details = Vec::new();
     for task in tasks {
@@ -2107,9 +2210,10 @@ fn paginate_orchestrator_messages(
 /// Update task status (for Kanban drag-and-drop)
 async fn update_task_status(
     State(deployment): State<DeploymentImpl>,
-    Path((workflow_id, task_id)): Path<(String, String)>,
+    Path((workflow_id, task_id)): Path<(Uuid, String)>,
     Json(req): Json<UpdateTaskStatusRequest>,
 ) -> Result<ResponseJson<ApiResponse<WorkflowTask>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     // Verify workflow exists
     let workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
         .await?
@@ -2170,8 +2274,9 @@ async fn update_task_status(
 /// List task terminals
 async fn list_task_terminals(
     State(deployment): State<DeploymentImpl>,
-    Path((workflow_id, task_id)): Path<(String, String)>,
+    Path((workflow_id, task_id)): Path<(Uuid, String)>,
 ) -> Result<ResponseJson<ApiResponse<Vec<Terminal>>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     let _workflow = Workflow::find_by_id(&deployment.db().pool, &workflow_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("Workflow not found".to_string()))?;
@@ -2190,9 +2295,10 @@ async fn list_task_terminals(
 /// Submit user response for interactive terminal prompt
 async fn submit_prompt_response(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
     Json(payload): Json<SubmitPromptResponseRequest>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     let terminal_id = payload.terminal_id.trim();
     if terminal_id.is_empty() {
         return Err(ApiError::BadRequest("terminalId is required".to_string()));
@@ -2216,7 +2322,8 @@ async fn submit_prompt_response(
 
     let runtime = deployment.orchestrator_runtime();
     if !runtime.is_running(&workflow_id).await {
-        return Err(ApiError::BadRequest(format!(
+        // G16-014: Return 409 Conflict for non-running workflow (not a client input error)
+        return Err(ApiError::Conflict(format!(
             "Cannot submit prompt response: workflow '{workflow_id}' is not running"
         )));
     }
@@ -2248,9 +2355,10 @@ async fn submit_prompt_response(
 pub(crate) async fn submit_orchestrator_chat(
     State(deployment): State<DeploymentImpl>,
     headers: HeaderMap,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
     Json(payload): Json<SubmitOrchestratorChatRequest>,
 ) -> Result<ResponseJson<ApiResponse<SubmitOrchestratorChatResponse>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     if !is_orchestrator_chat_feature_enabled() {
         return Err(ApiError::Conflict(
             "Orchestrator chat feature is disabled by rollout flag".to_string(),
@@ -2538,9 +2646,10 @@ pub(crate) async fn submit_orchestrator_chat(
 /// List orchestrator conversation messages for a running workflow
 async fn list_orchestrator_messages(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
     Query(params): Query<ListOrchestratorMessagesQuery>,
 ) -> Result<ResponseJson<ApiResponse<Vec<OrchestratorChatMessageResponse>>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     if !is_orchestrator_chat_feature_enabled() {
         return Ok(ResponseJson(ApiResponse::success(Vec::new())));
     }
@@ -2627,9 +2736,10 @@ async fn list_orchestrator_messages(
 /// Execute merge terminal for workflow
 async fn merge_workflow(
     State(deployment): State<DeploymentImpl>,
-    Path(workflow_id): Path<String>,
+    Path(workflow_id): Path<Uuid>,
     Json(payload): Json<MergeWorkflowRequest>,
 ) -> Result<ResponseJson<ApiResponse<serde_json::Value>>, ApiError> {
+    let workflow_id = workflow_id.to_string();
     if let Some(strategy) = payload.merge_strategy.as_deref()
         && !strategy.eq_ignore_ascii_case("squash")
     {

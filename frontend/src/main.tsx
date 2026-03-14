@@ -4,6 +4,7 @@ import App from './App.tsx';
 // CSS is now imported by design scope components (LegacyDesignScope, NewDesignScope)
 import { ClickToComponent } from 'click-to-react-component';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ApiError } from '@/lib/api';
 import * as Sentry from '@sentry/react';
 import i18n from './i18n';
 import posthog from 'posthog-js';
@@ -52,11 +53,27 @@ if (
   );
 }
 
+const shouldRetry = (failureCount: number, error: Error): boolean => {
+  // Don't retry client errors (4xx)
+  if (error instanceof ApiError && error.status && error.status >= 400 && error.status < 500) {
+    return false;
+  }
+  return failureCount < 3;
+};
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60 * 5, // 5 minutes
       refetchOnWindowFocus: false,
+      retry: shouldRetry,
+    },
+    mutations: {
+      retry: shouldRetry,
+      onError: (error: Error) => {
+        // Global fallback: log mutation errors that aren't handled locally
+        console.error('[QueryClient] Mutation error:', error.message);
+      },
     },
   },
 });

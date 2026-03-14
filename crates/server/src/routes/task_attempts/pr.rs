@@ -198,6 +198,11 @@ pub async fn create_pr(
     State(deployment): State<DeploymentImpl>,
     Json(request): Json<CreatePrApiRequest>,
 ) -> Result<ResponseJson<ApiResponse<String, PrError>>, ApiError> {
+    // G34-002: Validate title is non-empty
+    if request.title.trim().is_empty() {
+        return Err(ApiError::BadRequest("PR title must not be empty".to_string()));
+    }
+
     let pool = &deployment.db().pool;
 
     let workspace_repo =
@@ -313,8 +318,8 @@ pub async fn create_pr(
         .await
     {
         Ok(pr_info) => {
-            // Update the workspace with PR information
-            if let Err(e) = Merge::create_pr(
+            // Update the workspace with PR information (G34-001: propagate DB error)
+            Merge::create_pr(
                 pool,
                 workspace.id,
                 workspace_repo.repo_id,
@@ -323,9 +328,10 @@ pub async fn create_pr(
                 &pr_info.url,
             )
             .await
-            {
+            .map_err(|e| {
                 tracing::error!("Failed to update workspace PR status: {}", e);
-            }
+                ApiError::Internal(format!("Failed to save PR status: {e}"))
+            })?;
 
             // Auto-open PR in browser
             if let Err(e) = utils::browser::open_browser(&pr_info.url) {

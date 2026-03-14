@@ -23,6 +23,7 @@ use services::services::{
 };
 use tokio::process::Command;
 use utils::response::ApiResponse;
+use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
 
@@ -154,9 +155,10 @@ async fn find_executable(cmd: &str) -> Option<String> {
 /// Retrieves all logs for a specific terminal in chronological order
 pub async fn get_terminal_logs(
     State(deployment): State<DeploymentImpl>,
-    Path(id): Path<String>,
+    Path(id): Path<Uuid>,
     Query(query): Query<TerminalLogsQuery>,
 ) -> Result<ResponseJson<ApiResponse<Vec<TerminalLog>>>, ApiError> {
+    let id = id.to_string();
     // Fetch logs from database (already in DESC order by created_at)
     // G16-011: Clamp limit to [0, 10000] to reject negative values and cap upper bound.
     let clamped_limit = query.limit.map(|l| l.clamp(0, 10000));
@@ -176,8 +178,9 @@ pub async fn get_terminal_logs(
 /// including auto-confirm flags and MessageBus bridge registration.
 pub async fn start_terminal(
     State(deployment): State<DeploymentImpl>,
-    Path(id): Path<String>,
+    Path(id): Path<Uuid>,
 ) -> Result<ResponseJson<ApiResponse<serde_json::Value>>, ApiError> {
+    let id = id.to_string();
     // Fetch terminal from database
     let terminal = Terminal::find_by_id(&deployment.db().pool, &id)
         .await?
@@ -254,10 +257,24 @@ pub async fn start_terminal(
 
     tracing::info!(terminal_id = %id, working_dir = %working_dir.display(), "Resolved terminal working directory");
 
-    // Transition to starting before spawn
-    Terminal::update_status(&deployment.db().pool, &id, "starting")
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to update terminal status: {e}")))?;
+    // G16-015: CAS transition to "starting" - only one caller can move from a startable status
+    let cas_result = sqlx::query(
+        r"
+        UPDATE terminal
+        SET status = 'starting', updated_at = datetime('now')
+        WHERE id = ? AND status IN ('not_started', 'failed', 'cancelled', 'waiting', 'working')
+        ",
+    )
+    .bind(&id)
+    .execute(&deployment.db().pool)
+    .await
+    .map_err(|e| ApiError::Internal(format!("Failed to update terminal status: {e}")))?;
+
+    if cas_result.rows_affected() == 0 {
+        return Err(ApiError::Conflict(format!(
+            "Terminal {id} cannot be started: status changed concurrently"
+        )));
+    }
     if let Err(e) = broadcast_terminal_status(&deployment, &terminal, "starting").await {
         tracing::warn!(
             terminal_id = %id,
@@ -551,12 +568,18 @@ async fn get_terminal_working_dir(
 /// Stops a running terminal and resets its status to 'not_started' for restart
 pub async fn stop_terminal(
     State(deployment): State<DeploymentImpl>,
-    Path(id): Path<String>,
+    Path(id): Path<Uuid>,
 ) -> Result<ResponseJson<ApiResponse<String>>, ApiError> {
+    let id = id.to_string();
     // Ensure terminal exists first to avoid false success on nonexistent id
     let terminal = Terminal::find_by_id(&deployment.db().pool, &id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Terminal {id} not found")))?;
+        .ok_or_else(|| {
+            // G16-005: Descriptive NotFound message including terminal ID
+            ApiError::NotFound(format!(
+                "Terminal {id} not found: cannot stop a non-existent terminal"
+            ))
+        })?;
     // Best-effort kill in case the process is still running
     if let Err(e) = deployment.process_manager().kill_terminal(&id).await {
         tracing::warn!("Failed to kill terminal {}: {}", id, e);
@@ -585,8 +608,9 @@ pub async fn stop_terminal(
 /// Close a completed/failed/cancelled terminal without resetting its final status.
 pub async fn close_terminal(
     State(deployment): State<DeploymentImpl>,
-    Path(id): Path<String>,
+    Path(id): Path<Uuid>,
 ) -> Result<ResponseJson<ApiResponse<Terminal>>, ApiError> {
+    let id = id.to_string();
     let terminal = Terminal::find_by_id(&deployment.db().pool, &id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Terminal {id} not found")))?;

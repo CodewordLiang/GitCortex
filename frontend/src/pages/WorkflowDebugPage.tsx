@@ -24,8 +24,11 @@ function mapTerminalStatus(status: string): TerminalStatus {
     case 'failed':
       return 'failed';
     case 'cancelled':
-      // cancelled maps to not_started to allow restart
-      return 'not_started';
+      return 'cancelled';
+    case 'review_passed':
+      return 'review_passed';
+    case 'review_rejected':
+      return 'review_rejected';
     default:
       return 'not_started';
   }
@@ -33,6 +36,7 @@ function mapTerminalStatus(status: string): TerminalStatus {
 
 export function WorkflowDebugPage() {
   const { workflowId } = useParams<{ workflowId: string }>();
+  // TODO: Replace 1.5s polling with useWorkflowEvents WS integration for real-time updates
   const { data: workflow, isLoading } = useWorkflow(workflowId ?? '', {
     refetchInterval: 1500,
     staleTime: 0,

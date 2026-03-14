@@ -29,6 +29,10 @@ use crate::{
     utils::generate_task_branch_name,
 };
 
+// G15-007: "working" is intentionally included so that provider-failover and
+// stall-recovery paths can restart a terminal that is nominally "working" but
+// whose PTY process has died or become unresponsive. Without it, the orchestrator
+// would be unable to re-launch such terminals and the task would stall.
 const STARTABLE_TERMINAL_STATUSES: [&str; 5] =
     ["not_started", "failed", "cancelled", "waiting", "working"];
 

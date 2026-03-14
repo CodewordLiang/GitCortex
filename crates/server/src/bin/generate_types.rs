@@ -230,6 +230,8 @@ fn generate_types_content() -> String {
         db::models::quality_issue::SeverityCount::decl(),
         server::routes::quality::QualityRunSummary::decl(),
         server::routes::quality::QualityRunDetail::decl(),
+        server::routes::workflow_events::WsEvent::decl(),
+        server::routes::workflow_events::WsEventType::decl(),
     ];
 
     let body = decls

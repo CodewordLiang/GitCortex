@@ -497,7 +497,12 @@ fn request_id(request: &ClientRequest) -> RequestId {
         | ClientRequest::AddConversationListener { request_id, .. }
         | ClientRequest::SendUserMessage { request_id, .. }
         | ClientRequest::ReviewStart { request_id, .. } => request_id.clone(),
-        _ => unreachable!("request_id called for unsupported request variant"),
+        _ => {
+                tracing::warn!(
+                    "request_id called for unknown ClientRequest variant; returning default id"
+                );
+                RequestId::Integer(0)
+            }
     }
 }
 
