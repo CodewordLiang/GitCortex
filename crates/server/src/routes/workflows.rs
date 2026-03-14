@@ -1550,10 +1550,27 @@ async fn start_workflow(
         )));
     }
 
-    // If resuming from paused, first reset to ready state
+    // If resuming from paused, use CAS to atomically reset to ready state
     if workflow.status == "paused" {
-        Workflow::update_status(&deployment.db().pool, &workflow_id, "ready").await?;
-        tracing::info!(workflow_id = %workflow_id, "Resuming workflow from paused state");
+        let now = chrono::Utc::now();
+        let result = sqlx::query(
+            r"
+            UPDATE workflow
+            SET status = 'ready', updated_at = ?
+            WHERE id = ? AND status = 'paused'
+            ",
+        )
+        .bind(now)
+        .bind(&workflow_id)
+        .execute(&deployment.db().pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(ApiError::BadRequest(
+                "Cannot resume workflow: status changed concurrently".to_string(),
+            ));
+        }
+        tracing::info!(workflow_id = %workflow_id, "Resuming workflow from paused state (CAS: paused → ready)");
     }
 
     // Call orchestrator runtime to start workflow
@@ -1597,20 +1614,38 @@ async fn pause_workflow(
     }
 
     // Stop the orchestrator runtime if it's active
-    let runtime = deployment.orchestrator_runtime();
-    if runtime.is_running(&workflow_id).await {
-        runtime.stop_workflow(&workflow_id).await.map_err(|e| {
-            tracing::error!("Failed to stop workflow {} for pause: {:?}", workflow_id, e);
-            ApiError::Internal("Failed to pause workflow".to_string())
-        })?;
-    }
+    stop_workflow_runtime_if_running(
+        &deployment,
+        &workflow_id,
+        "pausing workflow",
+        "Failed to pause workflow",
+    )
+    .await?;
+
+    // Kill PTY processes and unregister prompt watchers
+    let terminals =
+        cleanup_workflow_terminals(&deployment, &workflow_id, "pausing workflow").await?;
 
     // Mark workflow as paused
     Workflow::update_status(&deployment.db().pool, &workflow_id, "paused").await?;
 
+    // Cascade: reset running tasks to pending so they can be re-dispatched on resume
+    let tasks = WorkflowTask::find_by_workflow(&deployment.db().pool, &workflow_id).await?;
+    for task in &tasks {
+        if task.status == "running" {
+            WorkflowTask::update_status(&deployment.db().pool, &task.id, "pending").await?;
+        }
+    }
+    for terminal in &terminals {
+        if terminal.status == "working" {
+            Terminal::update_status(&deployment.db().pool, &terminal.id, "cancelled").await?;
+            Terminal::update_process(&deployment.db().pool, &terminal.id, None, None).await?;
+        }
+    }
+
     tracing::info!(
         workflow_id = %workflow_id,
-        "Workflow paused"
+        "Workflow paused with terminal cleanup and cascaded status updates"
     );
 
     Ok(ResponseJson(ApiResponse::success(())))
@@ -2616,6 +2651,16 @@ async fn merge_workflow(
         )));
     }
 
+    // CAS: atomically transition completed → merging to prevent concurrent merges
+    let cas_ok = Workflow::set_merging(&deployment.db().pool, &workflow_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !cas_ok {
+        return Err(ApiError::Conflict(
+            "Merge already in progress or workflow is not in completed state".to_string(),
+        ));
+    }
+
     let project = Project::find_by_id(&deployment.db().pool, workflow.project_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("Project not found".to_string()))?;
@@ -2659,14 +2704,12 @@ async fn merge_workflow(
         )));
     }
 
-    Workflow::update_status(&deployment.db().pool, &workflow_id, "merging").await?;
-
     let mut merged_tasks = Vec::new();
     for task in tasks {
         let task_id = task.id.clone();
         let task_branch = task.branch.trim();
         if task_branch.is_empty() {
-            let _ = Workflow::update_status(&deployment.db().pool, &workflow_id, "failed").await;
+            let _ = Workflow::set_merge_completed(&deployment.db().pool, &workflow_id).await;
             return Err(ApiError::BadRequest(format!(
                 "Cannot merge task {task_id}: branch is empty"
             )));
@@ -2674,7 +2717,7 @@ async fn merge_workflow(
 
         let task_worktree_path = base_repo_path.join("worktrees").join(task_branch);
         if !task_worktree_path.exists() {
-            let _ = Workflow::update_status(&deployment.db().pool, &workflow_id, "failed").await;
+            let _ = Workflow::set_merge_completed(&deployment.db().pool, &workflow_id).await;
             return Err(ApiError::BadRequest(format!(
                 "Cannot merge task {}: worktree path does not exist ({})",
                 task_id,
@@ -2706,29 +2749,28 @@ async fn merge_workflow(
                         | GitServiceError::RebaseInProgress
                 );
 
-                let fallback_status = if should_keep_merging_status {
-                    "merging"
-                } else {
-                    "failed"
-                };
-                if let Err(status_err) =
-                    Workflow::update_status(&deployment.db().pool, &workflow_id, fallback_status)
-                        .await
-                {
-                    tracing::warn!(
-                        workflow_id = %workflow_id,
-                        status = fallback_status,
-                        error = %status_err,
-                        "Failed to update workflow status after merge failure"
-                    );
+                if !should_keep_merging_status {
+                    // Roll back merging → completed on non-recoverable errors
+                    if let Err(status_err) =
+                        Workflow::set_merge_completed(&deployment.db().pool, &workflow_id).await
+                    {
+                        tracing::warn!(
+                            workflow_id = %workflow_id,
+                            error = %status_err,
+                            "Failed to roll back workflow status after merge failure"
+                        );
+                    }
                 }
+                // For recoverable errors (conflicts, diverged, dirty, rebase),
+                // keep 'merging' status so the user can resolve and retry.
 
                 return Err(ApiError::from(err));
             }
         }
     }
 
-    Workflow::update_status(&deployment.db().pool, &workflow_id, "completed").await?;
+    Workflow::set_merge_completed(&deployment.db().pool, &workflow_id).await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     // Return success response
     let result = json!({

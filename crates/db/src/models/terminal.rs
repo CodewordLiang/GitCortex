@@ -29,9 +29,9 @@ use uuid::Uuid;
     Display,
     Default,
 )]
-#[sqlx(type_name = "terminal_status", rename_all = "lowercase")]
+#[sqlx(type_name = "terminal_status", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "lowercase")]
+#[strum(serialize_all = "snake_case")]
 pub enum TerminalStatus {
     /// Not started
     #[default]
@@ -48,6 +48,12 @@ pub enum TerminalStatus {
     Failed,
     /// Cancelled
     Cancelled,
+    /// Review passed
+    ReviewPassed,
+    /// Review rejected
+    ReviewRejected,
+    /// Quality gate pending
+    QualityPending,
 }
 
 /// Terminal
@@ -570,7 +576,7 @@ impl Terminal {
     /// Set terminal completion status only when terminal is not finalized yet.
     ///
     /// Returns `Ok(true)` when the transition succeeds, `Ok(false)` when the
-    /// terminal is already finalized (completed/cancelled or completed_at set).
+    /// terminal is already finalized (completed/failed/cancelled or completed_at set).
     pub async fn set_completed_if_unfinished(
         pool: &SqlitePool,
         id: &str,
@@ -584,6 +590,7 @@ impl Terminal {
             WHERE id = ?
               AND completed_at IS NULL
               AND status != 'completed'
+              AND status != 'failed'
               AND status != 'cancelled'
             ",
         )

@@ -28,7 +28,10 @@ export type WsEventType =
   | 'system.error'
   | 'terminal.prompt_detected'
   | 'terminal.prompt_decision'
-  | 'quality.gate_result';
+  | 'quality.gate_result'
+  | 'provider.switched'
+  | 'provider.exhausted'
+  | 'provider.recovered';
 
 type ConnectionStatus =
   | 'disconnected'
@@ -582,6 +585,15 @@ function normalizeWorkflowEventPayload(
       return normalizeTerminalPromptDetectedPayload(payload);
     case 'terminal.prompt_decision':
       return normalizeTerminalPromptDecisionPayload(payload);
+    case 'provider.switched':
+      console.warn('[wsStore] Provider switched:', payload);
+      return payload;
+    case 'provider.exhausted':
+      console.warn('[wsStore] Provider exhausted:', payload);
+      return payload;
+    case 'provider.recovered':
+      console.warn('[wsStore] Provider recovered:', payload);
+      return payload;
     default:
       return payload;
   }

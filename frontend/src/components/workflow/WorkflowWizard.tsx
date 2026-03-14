@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { StepIndicator } from './StepIndicator';
@@ -49,6 +49,11 @@ export function WorkflowWizard({
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const { config, isSubmitting } = state;
+
+  // Keep a ref to the latest config so async handlers never capture a stale snapshot
+  const configRef = useRef(config);
+  configRef.current = config;
+
   const visibleSteps = useMemo(
     () => getVisibleWizardSteps(config.basic.executionMode),
     [config.basic.executionMode]
@@ -57,6 +62,42 @@ export function WorkflowWizard({
     () => getVisibleWizardStepIds(config.basic.executionMode),
     [config.basic.executionMode]
   );
+  // G25-015: When switching from agent_planned back to diy, auto-initialize
+  // skipped step data (tasks / terminals) if they are empty.
+  useEffect(() => {
+    if (config.basic.executionMode !== 'diy') {
+      return;
+    }
+
+    setState((prev) => {
+      const needsTasks =
+        prev.config.tasks.length === 0 && prev.config.basic.taskCount > 0;
+      const needsTerminals = prev.config.terminals.length === 0;
+
+      if (!needsTasks && !needsTerminals) {
+        return prev;
+      }
+
+      const defaults = getDefaultWizardConfig();
+      return {
+        ...prev,
+        config: {
+          ...prev.config,
+          tasks: needsTasks
+            ? Array.from({ length: prev.config.basic.taskCount }, (_, i) => ({
+                id: `task-${Date.now()}-${i}`,
+                name: '',
+                description: '',
+                branch: '',
+                terminalCount: 1,
+              }))
+            : prev.config.tasks,
+          terminals: needsTerminals ? defaults.terminals : prev.config.terminals,
+        },
+      };
+    });
+  }, [config.basic.executionMode]);
+
   const navigation = useWizardNavigation({ steps: visibleStepIds });
   const { currentStep } = navigation;
   const validation = useWizardValidation(currentStep);
@@ -130,7 +171,7 @@ export function WorkflowWizard({
   );
 
   const handleNext = () => {
-    const newErrors = validation.validate(config);
+    const newErrors = validation.validate(configRef.current);
     if (Object.keys(newErrors).length > 0) {
       return;
     }
@@ -156,18 +197,19 @@ export function WorkflowWizard({
   };
 
   const handleSubmit = async () => {
-    const newErrors = validation.validate(config);
+    const latestConfig = configRef.current;
+    const newErrors = validation.validate(latestConfig);
     if (Object.keys(newErrors).length > 0) {
       return;
     }
 
-    setState({ ...state, isSubmitting: true });
+    setState((prev) => ({ ...prev, isSubmitting: true }));
     setSubmitError(null);
 
     try {
-      await Promise.resolve(onComplete(config));
+      await Promise.resolve(onComplete(latestConfig));
       // Reset submitting state after successful completion
-      setState({ ...state, isSubmitting: false });
+      setState((prev) => ({ ...prev, isSubmitting: false }));
     } catch (error) {
       const errorObj =
         error instanceof Error
@@ -175,7 +217,7 @@ export function WorkflowWizard({
           : new Error(t('wizard.errors.submitUnknown'));
       onError?.(errorObj);
       setSubmitError(errorObj.message);
-      setState({ ...state, isSubmitting: false });
+      setState((prev) => ({ ...prev, isSubmitting: false }));
     }
   };
 
@@ -218,7 +260,13 @@ export function WorkflowWizard({
             config={config.basic}
             errors={errors}
             onChange={(updates) => {
-              handleUpdateConfig({ basic: { ...config.basic, ...updates } });
+              setState((prevState) => ({
+                ...prevState,
+                config: {
+                  ...prevState.config,
+                  basic: { ...prevState.config.basic, ...updates },
+                },
+              }));
             }}
           />
         );
@@ -265,7 +313,13 @@ export function WorkflowWizard({
             config={config.commands}
             errors={errors}
             onUpdate={(updates) => {
-              handleUpdateConfig({ commands: { ...config.commands, ...updates } });
+              setState((prevState) => ({
+                ...prevState,
+                config: {
+                  ...prevState.config,
+                  commands: { ...prevState.config.commands, ...updates },
+                },
+              }));
             }}
             onError={onError}
           />

@@ -21,10 +21,13 @@ pub const DEFAULT_RETRY_DELAY_MS: u64 = 1000;
 pub const DEFAULT_LLM_RATE_LIMIT_PER_SECOND: u32 = 10;
 
 /// Terminal status values
-pub const TERMINAL_STATUS_PENDING: &str = "pending";
-pub const TERMINAL_STATUS_RUNNING: &str = "running";
+pub const TERMINAL_STATUS_NOT_STARTED: &str = "not_started";
+pub const TERMINAL_STATUS_STARTING: &str = "starting";
+pub const TERMINAL_STATUS_WAITING: &str = "waiting";
+pub const TERMINAL_STATUS_WORKING: &str = "working";
 pub const TERMINAL_STATUS_COMPLETED: &str = "completed";
 pub const TERMINAL_STATUS_FAILED: &str = "failed";
+pub const TERMINAL_STATUS_CANCELLED: &str = "cancelled";
 pub const TERMINAL_STATUS_REVIEW_PASSED: &str = "review_passed";
 pub const TERMINAL_STATUS_REVIEW_REJECTED: &str = "review_rejected";
 

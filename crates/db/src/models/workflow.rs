@@ -647,7 +647,14 @@ impl Workflow {
         result
     }
 
-    /// Update workflow status
+    /// Update workflow status (generic, no CAS protection).
+    ///
+    /// # Caller Responsibility
+    /// This method performs an unconditional status update. Callers MUST ensure
+    /// the workflow is in a valid source state before invoking this method to
+    /// prevent concurrent state regression. For critical transitions (e.g.
+    /// starting→ready, ready→running), prefer dedicated CAS methods like
+    /// `set_ready` or `set_started`.
     pub async fn update_status(pool: &SqlitePool, id: &str, status: &str) -> sqlx::Result<()> {
         let now = Utc::now();
         sqlx::query(
@@ -665,14 +672,17 @@ impl Workflow {
         Ok(())
     }
 
-    /// Set workflow to ready
+    /// Set workflow to ready (only from 'starting' state).
+    ///
+    /// Uses CAS to ensure workflow is in 'starting' state before transitioning
+    /// to 'ready'. Returns error if the workflow is not in 'starting' state.
     pub async fn set_ready(pool: &SqlitePool, id: &str) -> sqlx::Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        let result = sqlx::query(
             r"
             UPDATE workflow
             SET status = 'ready', ready_at = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'starting'
             ",
         )
         .bind(now)
@@ -680,20 +690,25 @@ impl Workflow {
         .bind(id)
         .execute(pool)
         .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound);
+        }
+
         Ok(())
     }
 
     /// Set workflow started
     ///
-    /// Uses Compare-And-Set (CAS) to ensure workflow is in 'ready' state
-    /// before transitioning to 'running'. Returns error if CAS fails.
+    /// Uses Compare-And-Set (CAS) to ensure workflow is in 'ready' or 'paused'
+    /// state before transitioning to 'running'. Returns error if CAS fails.
     pub async fn set_started(pool: &SqlitePool, id: &str) -> sqlx::Result<()> {
         let now = Utc::now();
         let result = sqlx::query(
             r"
             UPDATE workflow
             SET status = 'running', started_at = ?, updated_at = ?
-            WHERE id = ? AND status = 'ready'
+            WHERE id = ? AND status IN ('ready', 'paused')
             ",
         )
         .bind(now)
@@ -706,6 +721,44 @@ impl Workflow {
         if result.rows_affected() == 0 {
             return Err(sqlx::Error::RowNotFound);
         }
+
+        Ok(())
+    }
+
+    /// Atomically transition workflow from 'completed' to 'merging' (CAS).
+    ///
+    /// Returns `true` if the transition succeeded (exactly one row updated),
+    /// `false` if the workflow was not in 'completed' state (another merge
+    /// is already in progress or the workflow is in an incompatible state).
+    pub async fn set_merging(pool: &SqlitePool, id: &str) -> anyhow::Result<bool> {
+        let result = sqlx::query(
+            r"
+            UPDATE workflow
+            SET status = 'merging', updated_at = datetime('now')
+            WHERE id = ? AND status = 'completed'
+            ",
+        )
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Atomically transition workflow from 'merging' back to 'completed'.
+    ///
+    /// Used after a successful merge or to roll back on merge failure.
+    pub async fn set_merge_completed(pool: &SqlitePool, id: &str) -> anyhow::Result<()> {
+        sqlx::query(
+            r"
+            UPDATE workflow
+            SET status = 'completed', updated_at = datetime('now')
+            WHERE id = ? AND status = 'merging'
+            ",
+        )
+        .bind(id)
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
@@ -876,7 +929,13 @@ impl WorkflowTask {
             .await
     }
 
-    /// Update workflow task status
+    /// Update workflow task status (generic, no CAS protection).
+    ///
+    /// # Caller Responsibility
+    /// This method performs an unconditional status update. Callers MUST verify
+    /// the task is not already in a terminal state (completed/failed/cancelled)
+    /// before calling, to prevent overwriting finalized results. For safe
+    /// transitions, check `task.status` before invoking this method.
     pub async fn update_status(pool: &SqlitePool, id: &str, status: &str) -> sqlx::Result<()> {
         let now = Utc::now();
         sqlx::query(

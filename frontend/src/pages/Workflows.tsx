@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -1322,8 +1322,15 @@ export function Workflows() {
   const runAsyncSafely = useCallback((task: Promise<unknown>) => {
     task.catch((error) => {
       console.error('Async workflow action failed:', error);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : t('management.errors.asyncActionFailed', {
+              defaultValue: 'Workflow action failed. Please try again.',
+            });
+      showToast(message, 'error');
     });
-  }, []);
+  }, [showToast, t]);
 
   const promptDialog = activePrompt ? (
     <WorkflowPromptDialog

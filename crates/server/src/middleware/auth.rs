@@ -72,8 +72,13 @@ pub async fn require_api_token(req: Request, next: Next) -> Result<Response, Sta
     // Expected format: "Bearer <token>"
     let expected = format!("Bearer {token}");
 
-    // Verify token matches
-    if auth_header == Some(expected.as_str()) {
+    // Verify token matches (constant-time comparison to prevent timing attacks)
+    let is_valid = match auth_header {
+        Some(header) => constant_time_eq(header.as_bytes(), expected.as_bytes()),
+        None => false,
+    };
+
+    if is_valid {
         // Authentication successful
         tracing::trace!("API request authenticated successfully");
         Ok(next.run(req).await)
@@ -87,6 +92,21 @@ pub async fn require_api_token(req: Request, next: Next) -> Result<Response, Sta
         );
         Err(StatusCode::UNAUTHORIZED)
     }
+}
+
+/// Constant-time byte comparison to prevent timing attacks.
+///
+/// Returns `true` if both slices are equal, `false` otherwise.
+/// Always compares all bytes regardless of where a mismatch occurs.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[cfg(test)]

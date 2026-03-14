@@ -26,7 +26,8 @@ use super::{
         GIT_COMMIT_METADATA_SEPARATOR, HANDOFF_COMMIT_MAX_CHARS, HANDOFF_NOTES_MAX_CHARS,
         MAX_CONSECUTIVE_LLM_FAILURES, QUALITY_GATE_MODE_ENFORCE, QUALITY_GATE_MODE_OFF,
         QUALITY_GATE_MODE_SHADOW, STATE_SAVE_DEBOUNCE_SECS, TERMINAL_STATUS_COMPLETED,
-        TERMINAL_STATUS_FAILED, TERMINAL_STATUS_REVIEW_PASSED, TERMINAL_STATUS_REVIEW_REJECTED,
+        TERMINAL_STATUS_FAILED, TERMINAL_STATUS_QUALITY_PENDING, TERMINAL_STATUS_REVIEW_PASSED,
+        TERMINAL_STATUS_REVIEW_REJECTED,
         WORKFLOW_STATUS_COMPLETED, WORKFLOW_STATUS_FAILED, WORKFLOW_STATUS_MERGING,
         WORKFLOW_STATUS_RUNNING, WORKFLOW_TOPIC_PREFIX,
     },
@@ -1192,7 +1193,7 @@ impl OrchestratorAgent {
         if let Ok(Some(terminal)) =
             db::models::Terminal::find_by_id(&self.db.pool, &event.terminal_id).await
         {
-            let valid_states = ["working", "quality_pending"];
+            let valid_states = ["working", TERMINAL_STATUS_QUALITY_PENDING];
             if !valid_states.contains(&terminal.status.as_str()) {
                 tracing::warn!(
                     terminal_id = %event.terminal_id,
