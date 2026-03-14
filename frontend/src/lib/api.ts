@@ -117,15 +117,21 @@ export class ApiError<E = unknown> extends Error {
   }
 }
 
-const makeRequest = async (url: string, options: RequestInit = {}) => {
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+export const makeRequest = async (url: string, options: RequestInit = {}) => {
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
+  // Allow callers to override the signal; fall back to a 30-second timeout.
+  const signal = options.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+
   return fetch(url, {
     ...options,
     headers,
+    signal,
   });
 };
 

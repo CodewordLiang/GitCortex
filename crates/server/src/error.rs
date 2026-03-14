@@ -196,7 +196,10 @@ impl IntoResponse for ApiError {
                 services::services::git::GitServiceError::RebaseInProgress => {
                     "A rebase is already in progress. Resolve conflicts or abort the rebase, then retry.".to_string()
                 }
-                _ => format!("{error_type}: {self}"),
+                _ => {
+                    tracing::error!(error_type, error = %self, "Internal server error");
+                    "Internal server error".to_string()
+                }
             },
             ApiError::Container(ContainerError::Sqlx(sqlx::Error::RowNotFound)) => {
                 "Container not found.".to_string()
@@ -208,7 +211,14 @@ impl IntoResponse for ApiError {
             ApiError::BadRequest(msg) | ApiError::Conflict(msg) | ApiError::Forbidden(msg) => {
                 msg.clone()
             }
-            _ => format!("{error_type}: {self}"),
+            _ => {
+                if status_code == StatusCode::INTERNAL_SERVER_ERROR {
+                    tracing::error!(error_type, error = %self, "Internal server error");
+                    "Internal server error".to_string()
+                } else {
+                    format!("{error_type}: {self}")
+                }
+            }
         };
         let response = ApiResponse::<()>::error(&error_message);
         (status_code, Json(response)).into_response()

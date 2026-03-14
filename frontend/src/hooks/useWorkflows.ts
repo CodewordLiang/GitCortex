@@ -4,7 +4,7 @@ import {
   useQueryClient,
   UseQueryResult,
 } from '@tanstack/react-query';
-import { handleApiResponse, logApiError } from '@/lib/api';
+import { handleApiResponse, logApiError, makeRequest } from '@/lib/api';
 import type {
   WorkflowDetailDto,
   WorkflowListItemDto,
@@ -44,7 +44,7 @@ export const WORKFLOW_STATUS_TRANSITIONS: Record<
   WorkflowActions
 > = {
   draft: {
-    canPrepare: true,
+    canPrepare: false,
     canStart: false,
     canPause: false,
     canStop: false,
@@ -95,8 +95,8 @@ export const WORKFLOW_STATUS_TRANSITIONS: Record<
     canPrepare: false,
     canStart: false,
     canPause: false,
-    canStop: true,
-    canMerge: true,
+    canStop: false,
+    canMerge: false,
     canDelete: false,
   },
   completed: {
@@ -311,7 +311,7 @@ const workflowsApi = {
    * Get all workflows for a project
    */
   getForProject: async (projectId: string): Promise<WorkflowListItemDto[]> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows?project_id=${encodeURIComponent(projectId)}`
     );
     return handleApiResponse<WorkflowListItemDto[]>(response);
@@ -321,7 +321,7 @@ const workflowsApi = {
    * Get a single workflow by ID
    */
   getById: async (workflowId: string): Promise<Workflow> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(workflowId)}`
     );
     const workflow = await handleApiResponse<Workflow>(response);
@@ -332,9 +332,8 @@ const workflowsApi = {
    * Create a new workflow
    */
   create: async (data: CreateWorkflowRequest): Promise<Workflow> => {
-    const response = await fetch('/api/workflows', {
+    const response = await makeRequest('/api/workflows', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
     const workflow = await handleApiResponse<Workflow>(response);
@@ -345,11 +344,10 @@ const workflowsApi = {
    * Prepare a workflow (start terminals, created → starting → ready)
    */
   prepare: async (workflowId: string): Promise<void> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(workflowId)}/prepare`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
       }
     );
     return handleApiResponse<void>(response);
@@ -359,11 +357,10 @@ const workflowsApi = {
    * Start a workflow execution (ready → running)
    */
   start: async (data: StartWorkflowRequest): Promise<WorkflowExecution> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(data.workflow_id)}/start`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
       }
     );
     return handleApiResponse<WorkflowExecution>(response);
@@ -373,11 +370,10 @@ const workflowsApi = {
    * Pause a running workflow
    */
   pause: async (data: PauseWorkflowRequest): Promise<WorkflowExecution> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(data.workflow_id)}/pause`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
       }
     );
     return handleApiResponse<WorkflowExecution>(response);
@@ -387,11 +383,10 @@ const workflowsApi = {
    * Stop a workflow
    */
   stop: async (data: StopWorkflowRequest): Promise<WorkflowExecution> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(data.workflow_id)}/stop`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
       }
     );
     return handleApiResponse<WorkflowExecution>(response);
@@ -403,11 +398,10 @@ const workflowsApi = {
   submitPromptResponse: async (
     data: SubmitWorkflowPromptResponseRequest
   ): Promise<void> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(data.workflow_id)}/prompts/respond`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           terminal_id: data.terminal_id,
           response: data.response,
@@ -423,11 +417,10 @@ const workflowsApi = {
   submitOrchestratorChat: async (
     data: SubmitOrchestratorChatRequest
   ): Promise<SubmitOrchestratorChatResponse> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(data.workflow_id)}/orchestrator/chat`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: data.message,
           source: data.source ?? 'web',
@@ -453,7 +446,7 @@ const workflowsApi = {
       query.set('limit', String(params.limit));
     }
     const querySuffix = query.toString() ? `?${query.toString()}` : '';
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(workflowId)}/orchestrator/messages${querySuffix}`
     );
     return handleApiResponse<OrchestratorChatMessage[]>(response);
@@ -463,11 +456,10 @@ const workflowsApi = {
    * Merge workflow task branches into target branch
    */
   merge: async (data: MergeWorkflowRequest): Promise<WorkflowMergeResult> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(data.workflow_id)}/merge`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           merge_strategy: data.merge_strategy ?? 'squash',
         }),
@@ -480,7 +472,7 @@ const workflowsApi = {
    * Delete a workflow
    */
   delete: async (workflowId: string): Promise<void> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(workflowId)}`,
       {
         method: 'DELETE',
@@ -497,11 +489,10 @@ const workflowsApi = {
     taskId: string,
     status: string
   ): Promise<WorkflowTaskDto> => {
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/workflows/${encodeURIComponent(workflowId)}/tasks/${encodeURIComponent(taskId)}/status`,
       {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       }
     );
