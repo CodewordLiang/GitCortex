@@ -1912,6 +1912,7 @@ impl OrchestratorAgent {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn should_skip_completed_handoff(next_action: &str) -> bool {
         matches!(
             next_action.trim().to_ascii_lowercase().as_str(),
@@ -2321,6 +2322,7 @@ impl OrchestratorAgent {
     }
 
     /// Handle review passed status from git event
+    #[allow(dead_code)]
     async fn handle_git_review_pass(
         &self,
         reviewer_terminal_id: &str,
@@ -2363,6 +2365,7 @@ impl OrchestratorAgent {
     }
 
     /// Handle review rejected status from git event
+    #[allow(dead_code)]
     async fn handle_git_review_reject(
         &self,
         reviewer_terminal_id: &str,
@@ -2617,6 +2620,7 @@ impl OrchestratorAgent {
     ///
     /// When the failure is a provider issue and failover succeeds (replacement
     /// terminal dispatched), the normal error-handler flow is skipped.
+    #[allow(dead_code)]
     async fn handle_git_terminal_failed(
         &self,
         terminal_id: &str,
@@ -2697,6 +2701,7 @@ impl OrchestratorAgent {
     }
 
     /// Awaken the orchestrator to process events
+    #[allow(dead_code)]
     async fn awaken(&self) {
         // Check if orchestrator is idle and needs to be awakened
         let state = self.state.read().await;

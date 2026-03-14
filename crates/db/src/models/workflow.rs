@@ -120,6 +120,7 @@ pub struct Workflow {
     /// 1. A database migration to add CHECK constraints
     /// 2. Updating all raw SQL queries that compare/set status strings
     /// 3. Changing the `FromRow` derivation to handle enum deserialization
+    ///
     /// This is tracked as a future improvement. In the meantime, use the
     /// `WorkflowStatus` enum and constants in `orchestrator::constants` for
     /// compile-time safety at the application layer.
