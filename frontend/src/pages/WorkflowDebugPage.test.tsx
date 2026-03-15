@@ -1,10 +1,18 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WorkflowDebugPage } from './WorkflowDebugPage';
 
 vi.mock('@/hooks/useWorkflows', () => ({
   useWorkflow: vi.fn(),
+  workflowKeys: {
+    byId: (id: string) => ['workflow', id],
+  },
+}));
+
+vi.mock('@/stores/wsStore', () => ({
+  useWorkflowEvents: vi.fn(),
 }));
 
 vi.mock('@/components/terminal/TerminalDebugView', () => ({
@@ -12,6 +20,9 @@ vi.mock('@/components/terminal/TerminalDebugView', () => ({
 }));
 
 import { useWorkflow } from '@/hooks/useWorkflows';
+
+const createQueryClient = () =>
+  new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 describe('WorkflowDebugPage', () => {
   it('renders debug view when workflow exists', () => {
@@ -37,11 +48,13 @@ describe('WorkflowDebugPage', () => {
     } as any);
 
     render(
-      <MemoryRouter initialEntries={['/debug/wf-1']}>
-        <Routes>
-          <Route path="/debug/:workflowId" element={<WorkflowDebugPage />} />
-        </Routes>
-      </MemoryRouter>
+      <QueryClientProvider client={createQueryClient()}>
+        <MemoryRouter initialEntries={['/debug/wf-1']}>
+          <Routes>
+            <Route path="/debug/:workflowId" element={<WorkflowDebugPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     expect(screen.getByTestId('terminal-debug-view')).toBeInTheDocument();
@@ -55,11 +68,13 @@ describe('WorkflowDebugPage', () => {
     } as any);
 
     render(
-      <MemoryRouter initialEntries={['/debug/wf-1']}>
-        <Routes>
-          <Route path="/debug/:workflowId" element={<WorkflowDebugPage />} />
-        </Routes>
-      </MemoryRouter>
+      <QueryClientProvider client={createQueryClient()}>
+        <MemoryRouter initialEntries={['/debug/wf-1']}>
+          <Routes>
+            <Route path="/debug/:workflowId" element={<WorkflowDebugPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     expect(screen.getByText('Loading...')).toBeInTheDocument();
@@ -73,11 +88,13 @@ describe('WorkflowDebugPage', () => {
     } as any);
 
     render(
-      <MemoryRouter initialEntries={['/debug/wf-1']}>
-        <Routes>
-          <Route path="/debug/:workflowId" element={<WorkflowDebugPage />} />
-        </Routes>
-      </MemoryRouter>
+      <QueryClientProvider client={createQueryClient()}>
+        <MemoryRouter initialEntries={['/debug/wf-1']}>
+          <Routes>
+            <Route path="/debug/:workflowId" element={<WorkflowDebugPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     expect(screen.getByText('Workflow not found')).toBeInTheDocument();

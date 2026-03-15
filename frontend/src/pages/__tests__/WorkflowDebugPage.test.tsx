@@ -1,11 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WorkflowDebugPage } from '../WorkflowDebugPage';
 
 // Mock useWorkflow hook
 vi.mock('@/hooks/useWorkflows', () => ({
   useWorkflow: vi.fn(),
+  workflowKeys: {
+    byId: (id: string) => ['workflow', id],
+  },
+}));
+
+// Mock wsStore
+vi.mock('@/stores/wsStore', () => ({
+  useWorkflowEvents: vi.fn(),
 }));
 
 // Mock TerminalDebugView to avoid xterm.js initialization in tests
@@ -41,12 +50,17 @@ describe('WorkflowDebugPage', () => {
   });
 
   const renderWithRouter = (workflowId: string) => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     return render(
-      <MemoryRouter initialEntries={[`/workflow/${workflowId}/debug`]}>
-        <Routes>
-          <Route path="/workflow/:workflowId/debug" element={<WorkflowDebugPage />} />
-        </Routes>
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[`/workflow/${workflowId}/debug`]}>
+          <Routes>
+            <Route path="/workflow/:workflowId/debug" element={<WorkflowDebugPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
     );
   };
 
