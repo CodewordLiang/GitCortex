@@ -31,6 +31,7 @@ mod tests {
 
         manager
             .kill(handle.pid)
+            .await
             .expect("Process kill by PID should succeed");
 
         // Wait for process to exit after SIGTERM/taskkill
@@ -105,6 +106,7 @@ mod tests {
         for pid in pids {
             manager
                 .kill(pid)
+                .await
                 .expect("Process kill by PID should succeed");
         }
 
