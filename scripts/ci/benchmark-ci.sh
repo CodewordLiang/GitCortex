@@ -148,3 +148,5 @@ case "${command}" in
     usage
     ;;
 esac
+
+exit 0

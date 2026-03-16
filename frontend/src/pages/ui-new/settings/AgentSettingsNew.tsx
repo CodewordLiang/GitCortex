@@ -218,6 +218,22 @@ function getInstallPhaseKey(
   });
 }
 
+/** Resets local profiles state to server content (extracted to reduce cognitive complexity). */
+function resetToServerProfiles(
+  serverContent: string | undefined,
+  setContent: (v: string) => void,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  setParsed: (v: any) => void,
+) {
+  if (!serverContent) return;
+  setContent(serverContent);
+  try {
+    setParsed(JSON.parse(serverContent));
+  } catch {
+    setParsed(null);
+  }
+}
+
 /* ================================================================== */
 /*  Main component                                                    */
 /* ================================================================== */
@@ -624,14 +640,7 @@ export function AgentSettingsNew() {
   };
 
   const handleDiscardProfiles = () => {
-    if (serverProfilesContent) {
-      setLocalProfilesContent(serverProfilesContent);
-      try {
-        setLocalParsedProfiles(JSON.parse(serverProfilesContent));
-      } catch {
-        setLocalParsedProfiles(null);
-      }
-    }
+    resetToServerProfiles(serverProfilesContent, setLocalProfilesContent, setLocalParsedProfiles);
     setIsDirty(false);
   };
 
