@@ -185,13 +185,49 @@ pnpm run dev
 - 前端：`http://localhost:23457`
 - 后端 API：`http://localhost:23456/api`
 
+**可选：SonarQube 集成**
+GitCortex 配备了一个利用本地 SonarQube 引擎提供的集成化、三层质量门系统。
+要启动本地 SonarQube 环境，你可以运行：
+```bash
+cd docker/compose
+docker-compose -f docker-compose.dev.yml up -d sonarqube
+```
+
+### 生产模式部署
+
+```bash
+# 1. 编译后端（Release 二进制）
+cargo build --release -p server
+
+# 2. 编译前端（静态资源，嵌入后端）
+cd frontend && pnpm build && cd ..
+
+# 3. 设置加密密钥（必需，恰好 32 个字符）
+# 方式一：环境变量（推荐）
+# Linux/macOS:
+export GITCORTEX_ENCRYPTION_KEY="你的32位加密密钥"
+# Windows PowerShell:
+$env:GITCORTEX_ENCRYPTION_KEY="你的32位加密密钥"
+
+# 方式二：Docker 模式下，安装脚本会自动生成 docker/compose/.env 文件，
+# 密钥在安装向导中自动配置，无需手动设置。
+
+# 4. 运行
+./target/release/server       # Linux/macOS
+.\target\release\server.exe   # Windows
+```
+
+生产模式下前端和 API 通过同一个端口提供服务：`http://localhost:23456`
+
+> **注意：** 开发模式（`pnpm run dev`）下加密密钥是可选的——会自动使用默认密钥。生产模式（Release 编译）下，如果未设置密钥，服务器会**拒绝启动**。
+
 ### Docker 一键安装
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\docker\install-docker.ps1
 ```
 
-安装脚本支持交互式配置（挂载目录、密钥、端口、是否安装 AI CLI）、复用已有 `.env`、自动切换到更新流程。
+安装脚本支持交互式配置（挂载目录、密钥、端口、是否安装 AI CLI）、复用已有 `.env`、自动切换到更新流程。加密密钥在安装向导中自动配置。
 
 **可选：SonarQube 集成**
 GitCortex 配备了一个利用本地 SonarQube 引擎提供的集成化、三层质量门系统。

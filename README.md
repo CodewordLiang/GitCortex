@@ -185,13 +185,49 @@ Default URLs:
 - Frontend: `http://localhost:23457`
 - Backend API: `http://localhost:23456/api`
 
+**Optional: SonarQube Integration**
+GitCortex features an integrated, three-layer Quality Gate system using the SonarQube code analysis engine running locally.
+To spin up the local SonarQube instance, navigate to the docker directory:
+```bash
+cd docker/compose
+docker-compose -f docker-compose.dev.yml up -d sonarqube
+```
+
+### Production Build
+
+```bash
+# 1. Build backend (release binary)
+cargo build --release -p server
+
+# 2. Build frontend (static assets, embedded into backend)
+cd frontend && pnpm build && cd ..
+
+# 3. Set encryption key (required, exactly 32 characters)
+# Option A: Environment variable (recommended)
+# Linux/macOS:
+export GITCORTEX_ENCRYPTION_KEY="your-32-character-secret-key-here"
+# Windows PowerShell:
+$env:GITCORTEX_ENCRYPTION_KEY="your-32-character-secret-key-here"
+
+# Option B: In Docker, the .env file at docker/compose/.env is auto-generated
+# by the install script — no manual setup needed.
+
+# 4. Run
+./target/release/server    # Linux/macOS
+.\target\release\server.exe  # Windows
+```
+
+Production mode serves both frontend and API on a single port: `http://localhost:23456`
+
+> **Note:** In development mode (`pnpm run dev`), the encryption key is optional — a default key is used automatically. In production (release build), the server will **refuse to start** if the key is not set.
+
 ### Docker (One-Click Install)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\docker\install-docker.ps1
 ```
 
-The installer supports interactive setup (mount path, keys, port, optional AI CLI install), `.env` reuse, and automatic handoff to update flow.
+The installer supports interactive setup (mount path, keys, port, optional AI CLI install), `.env` reuse, and automatic handoff to update flow. The encryption key is configured automatically during the install wizard.
 
 **Optional: SonarQube Integration**
 GitCortex features an integrated, three-layer Quality Gate system using the SonarQube code analysis engine running locally.
