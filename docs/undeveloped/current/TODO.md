@@ -13,6 +13,7 @@
 - BACKLOG-002 Runner 容器分离 ✅ — 100% 完成（RemoteRunner gRPC client 已实现）
 - BACKLOG-003 CLI 安装状态 API 增强 ✅ — 100% 完成（WebSocket 进度流、SSE 路由已启用）
 - CI Pipeline 全面优化 ✅ — 20 个 Agent 任务全部完成（sccache、cargo-chef、composite actions、cargo-nextest）
+- Docker 适配完善 ✅ — 分离 Dockerfile（server/runner）加入 cargo-chef 分层、修复 runner 运行时缺失动态库、优化构建缓存
 - CI 状态：✅ 全绿（Basic Checks / Quality Gate / Docker Build 均 success）
 - SonarCloud：0 bugs, 0 vulnerabilities, 0 code smells, 0 security hotspots — A rating
 
@@ -26,6 +27,7 @@
 | WebSocket 安装进度 | ✅ 已实现 — CliInstaller 集成 + broadcast channel + 实时 WebSocket 推送 |
 | SSE 路由已启用 | ✅ 已实现 — SharedCliHealthMonitor Extension 层 + SSE 端点已激活 |
 | CI Pipeline 全面优化 | ✅ 已完成 — 3 个 Composite Actions、sccache 集成、cargo-chef Docker 分层、cargo-nextest 替换 |
+| Docker 分离镜像适配 | ✅ 已完成 — Dockerfile.server/runner 加入 cargo-chef、修复 runner 缺失 libsqlite3/libgit2、移除冗余 COPY 层 |
 
 **当前无未完成任务。项目开发已 100% 完成。**
 
