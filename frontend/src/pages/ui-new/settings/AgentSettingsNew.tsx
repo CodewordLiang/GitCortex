@@ -232,8 +232,7 @@ function deriveInstalledCliNames(
 function resetToServerProfiles(
   serverContent: string | undefined,
   setContent: (v: string) => void,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  setParsed: (v: any) => void,
+  setParsed: (v: ExecutorConfigs | null) => void,
 ) {
   if (!serverContent) return;
   setContent(serverContent);
