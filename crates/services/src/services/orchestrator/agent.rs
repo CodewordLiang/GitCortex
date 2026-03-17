@@ -4793,11 +4793,20 @@ impl OrchestratorAgent {
             // G06-003: resolve worktree path via WorktreeManager instead of hardcoding.
             let managed_path = crate::services::worktree_manager::WorktreeManager::get_worktree_base_dir()
                 .join(&task_branch);
+            let legacy_path = base_repo_path.join("worktrees").join(&task_branch);
             let task_worktree_path = if managed_path.exists() {
                 managed_path
+            } else if legacy_path.exists() {
+                legacy_path
             } else {
-                // Legacy fallback: <repo>/worktrees/<branch>
-                base_repo_path.join("worktrees").join(&task_branch)
+                // Workflow mode fallback: task branches live in the same repo
+                // (no separate worktree), so use the base repo path for merge.
+                tracing::warn!(
+                    task_id = %task_id,
+                    task_branch = %task_branch,
+                    "No worktree found for task branch, falling back to base repo path for merge"
+                );
+                base_repo_path.to_path_buf()
             };
 
             // Perform the merge via MergeCoordinator (G06-008).

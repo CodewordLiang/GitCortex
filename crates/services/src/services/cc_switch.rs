@@ -131,6 +131,12 @@ api_key = "{api_key}"
     // Set GITCORTEX_CODEX_WIRE_API=codex when provider explicitly requires /codex.
     config_content.push_str(&format!("wire_api = \"{wire_api}\"\n"));
 
+    // Skip interactive sandbox setup prompt by pre-configuring sandbox and approval.
+    // Without this, Codex CLI presents an interactive menu asking the user to select
+    // a sandbox type, which blocks automated PTY-based execution.
+    config_content.push_str("approval_policy = \"on-request\"\n");
+    config_content.push_str("sandbox_permissions = [\"disk-full-read-access\", \"disk-write-folder\"]\n");
+
     std::fs::write(&config_path, config_content)
         .map_err(|e| anyhow::anyhow!("Failed to write Codex config.toml: {e}"))?;
 

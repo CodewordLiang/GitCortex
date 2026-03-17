@@ -1706,9 +1706,13 @@ export function Workflows() {
     const fallbackProjectId = validProjectId;
 
     try {
-      const projectId = workingDir
-        ? await resolveProjectIdFromPath(workingDir, fallbackProjectId)
-        : fallbackProjectId;
+      // Prefer the already-selected project ID from the URL/sidebar.
+      // Only resolve from path when no project is selected yet.
+      const projectId =
+        fallbackProjectId ??
+        (workingDir
+          ? await resolveProjectIdFromPath(workingDir, null)
+          : null);
 
       if (!projectId) {
         throw new Error(t('management.errors.noProjectSelected'));

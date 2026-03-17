@@ -867,6 +867,77 @@ fn failure_exit_status() -> std::process::ExitStatus {
     }
 }
 
+impl LocalContainerService {
+    /// Resolve executor-specific environment variables for workspace mode.
+    ///
+    /// In workflow mode, `CCSwitchService` handles this via isolated CODEX_HOME/auth setup.
+    /// Workspace mode bypassed that path, so we inject the minimal set of env vars needed
+    /// for the executor CLI to authenticate with the configured API provider.
+    ///
+    /// For Codex: copies the user's global `~/.codex/` config (auth.json + config.toml)
+    /// into an isolated CODEX_HOME so the workspace process inherits auth settings.
+    async fn resolve_executor_env_vars(
+        &self,
+        base_executor: BaseCodingAgent,
+        _executor_action: &ExecutorAction,
+    ) -> HashMap<String, String> {
+        let mut vars = HashMap::new();
+
+        if matches!(base_executor, BaseCodingAgent::Codex) {
+            // Reuse the canonical codex_home() resolver from the executors crate.
+            let global_codex_home =
+                match executors::executors::codex::codex_home() {
+                    Some(p) if p.exists() => p,
+                    _ => {
+                        tracing::warn!(
+                            "Codex home directory not found, workspace Codex may lack authentication"
+                        );
+                        return vars;
+                    }
+                };
+
+            // Create an isolated CODEX_HOME and copy auth + config from global
+            let home_id = format!("ws-{}", uuid::Uuid::new_v4().as_simple());
+            let codex_home = utils::path::get_gitcortex_temp_dir()
+                .join("codex-workspaces")
+                .join(&home_id);
+
+            if let Err(e) = std::fs::create_dir_all(&codex_home) {
+                tracing::warn!(error = %e, "Failed to create workspace CODEX_HOME");
+                return vars;
+            }
+
+            // Copy auth.json
+            let global_auth = global_codex_home.join("auth.json");
+            if global_auth.exists() {
+                if let Err(e) = std::fs::copy(&global_auth, codex_home.join("auth.json")) {
+                    tracing::warn!(error = %e, "Failed to copy Codex auth.json to workspace");
+                }
+            }
+
+            // Copy config.toml
+            let global_config = global_codex_home.join("config.toml");
+            if global_config.exists() {
+                if let Err(e) = std::fs::copy(&global_config, codex_home.join("config.toml")) {
+                    tracing::warn!(error = %e, "Failed to copy Codex config.toml to workspace");
+                }
+            }
+
+            vars.insert(
+                "CODEX_HOME".to_string(),
+                codex_home.to_string_lossy().to_string(),
+            );
+            tracing::info!(
+                codex_home = %codex_home.display(),
+                global_codex_home = %global_codex_home.display(),
+                "Injected CODEX_HOME for workspace executor (copied from global config)"
+            );
+        }
+
+        vars
+    }
+}
+
 #[async_trait]
 impl ContainerService for LocalContainerService {
     fn msg_stores(&self) -> &Arc<RwLock<HashMap<Uuid, Arc<MsgStore>>>> {
@@ -1082,6 +1153,14 @@ impl ContainerService for LocalContainerService {
         env.insert("VK_TASK_ID", task.id.to_string());
         env.insert("VK_WORKSPACE_ID", workspace.id.to_string());
         env.insert("VK_WORKSPACE_BRANCH", &workspace.branch);
+
+        // Inject executor-specific authentication environment variables.
+        // Without this, Codex (and other CLIs) in workspace mode cannot authenticate
+        // because the isolated workspace environment doesn't inherit global CLI configs.
+        if let Some(base_executor) = executor_action.base_executor() {
+            let profile_vars = self.resolve_executor_env_vars(base_executor, executor_action).await;
+            env.merge(&profile_vars);
+        }
 
         // Create the child and stream, add to execution tracker with timeout
         let mut spawned = tokio::time::timeout(
