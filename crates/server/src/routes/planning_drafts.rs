@@ -401,6 +401,15 @@ async fn materialize_draft(
         .clone()
         .unwrap_or_default();
 
+    let initial_goal = match (draft.requirement_summary.as_ref(), draft.technical_spec.as_ref()) {
+        (Some(summary), Some(spec)) => {
+            Some(format!("{summary}\n\n---\n\nTechnical Specification:\n{spec}"))
+        }
+        (Some(summary), None) => Some(summary.clone()),
+        (None, Some(spec)) => Some(spec.clone()),
+        (None, None) => None,
+    };
+
     let mut workflow = Workflow {
         id: workflow_id.clone(),
         project_id: draft.project_id,
@@ -412,7 +421,7 @@ async fn materialize_draft(
         description: Some(requirement_summary.clone()),
         status: "created".to_string(),
         execution_mode: "agent_planned".to_string(),
-        initial_goal: Some(requirement_summary),
+        initial_goal,
         use_slash_commands: false,
         orchestrator_enabled: true,
         orchestrator_api_type: draft.planner_api_type.clone(),

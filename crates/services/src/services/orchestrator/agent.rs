@@ -27,7 +27,7 @@ use super::{
         GIT_COMMIT_METADATA_SEPARATOR, HANDOFF_COMMIT_MAX_CHARS, HANDOFF_NOTES_MAX_CHARS,
         MAX_CONSECUTIVE_LLM_FAILURES, QUALITY_GATE_MODE_ENFORCE, QUALITY_GATE_MODE_OFF,
         QUALITY_GATE_MODE_SHADOW, STATE_SAVE_DEBOUNCE_SECS, TASK_STATUS_CANCELLED,
-        TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_RUNNING,
+        TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_PENDING, TASK_STATUS_RUNNING,
         TERMINAL_STATUS_CANCELLED, TERMINAL_STATUS_COMPLETED, TERMINAL_STATUS_FAILED,
         TERMINAL_STATUS_NOT_STARTED, TERMINAL_STATUS_QUALITY_PENDING, TERMINAL_STATUS_REVIEW_PASSED,
         TERMINAL_STATUS_REVIEW_REJECTED, TERMINAL_STATUS_STARTING, TERMINAL_STATUS_WAITING,
@@ -3740,6 +3740,15 @@ impl OrchestratorAgent {
                     &target_branch,
                 )
                 .await?;
+
+                // After a successful merge, refresh stale branches for pending tasks.
+                // In agent_planned mode, branches are typically created at StartTerminal
+                // time, so they naturally fork from the latest target branch HEAD.
+                // However, if a branch was already created (e.g. via prepare) but has
+                // no work commits beyond the fork point, delete it so the next
+                // StartTerminal forks from the updated target branch.
+                self.refresh_pending_task_branches(&target_branch, &base_repo_path)
+                    .await;
             }
             OrchestratorInstruction::PauseWorkflow { .. } => {
                 tracing::warn!(
@@ -4894,6 +4903,100 @@ impl OrchestratorAgent {
             .await?;
 
         Ok(())
+    }
+
+    /// After a successful merge into the target branch, remove stale branches
+    /// belonging to pending tasks that have no work commits beyond the fork point.
+    /// This ensures subsequent `StartTerminal` calls fork from the updated target.
+    async fn refresh_pending_task_branches(
+        &self,
+        target_branch: &str,
+        base_repo_path: &std::path::Path,
+    ) {
+        let workflow_id = {
+            let state = self.state.read().await;
+            state.workflow_id.clone()
+        };
+
+        let tasks = match db::models::WorkflowTask::find_by_workflow(&self.db.pool, &workflow_id)
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to query tasks for branch refresh");
+                return;
+            }
+        };
+
+        let pending_tasks: Vec<_> = tasks
+            .into_iter()
+            .filter(|t| t.status == TASK_STATUS_PENDING)
+            .collect();
+
+        if pending_tasks.is_empty() {
+            return;
+        }
+
+        // Open the repository once for all branch checks.
+        let repo = match git2::Repository::open(base_repo_path) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to open repo for branch refresh");
+                return;
+            }
+        };
+
+        // Cache the target branch OID (same for all iterations).
+        let target_oid = match repo
+            .find_branch(target_branch, git2::BranchType::Local)
+            .ok()
+            .and_then(|b| b.get().target())
+        {
+            Some(oid) => oid,
+            None => return,
+        };
+
+        for task in &pending_tasks {
+            let branch = &task.branch;
+            if branch.is_empty() || branch == target_branch {
+                continue;
+            }
+
+            let branch_ref = match repo.find_branch(branch, git2::BranchType::Local) {
+                Ok(b) => b,
+                Err(_) => continue, // Branch doesn't exist yet — nothing to refresh
+            };
+
+            // If branch tip == merge-base with target, the branch has no unique commits.
+            let branch_oid = match branch_ref.get().target() {
+                Some(oid) => oid,
+                None => continue,
+            };
+
+            let merge_base = match repo.merge_base(branch_oid, target_oid) {
+                Ok(oid) => oid,
+                Err(_) => continue,
+            };
+
+            if branch_oid == merge_base {
+                // Branch has no work commits — safe to delete so it can be re-forked later.
+                tracing::info!(
+                    task_id = %task.id,
+                    branch = %branch,
+                    "Deleting stale pending-task branch (no unique commits) after merge"
+                );
+                // Delete via libgit2 directly (repo already open).
+                if let Ok(mut b) = repo.find_branch(branch, git2::BranchType::Local) {
+                    if let Err(e) = b.delete() {
+                        tracing::warn!(
+                            branch = %branch,
+                            error = %e,
+                            "Failed to delete stale branch (non-fatal)"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Handle terminal failure

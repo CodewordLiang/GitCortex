@@ -110,7 +110,7 @@ describe('Step1Basic', () => {
     ).toBeInTheDocument();
   });
 
-  it('should not show execution mode selector in manual wizard', () => {
+  it('should show execution mode selector', () => {
     renderWithI18n(
       <Step1Basic
         config={defaultConfig}
@@ -119,7 +119,43 @@ describe('Step1Basic', () => {
       />
     );
 
-    expect(screen.queryByText(i18n.t('workflow:step1.modeLabel'))).not.toBeInTheDocument();
+    expect(screen.getByText(i18n.t('workflow:step1.modeLabel'))).toBeInTheDocument();
+    expect(screen.getByText(i18n.t('workflow:step1.diyTitle'))).toBeInTheDocument();
+    expect(screen.getByText(i18n.t('workflow:step1.agentPlannedTitle'))).toBeInTheDocument();
+  });
+
+  it('should hide task count and import in agent_planned mode', () => {
+    const agentConfig: BasicConfig = {
+      ...defaultConfig,
+      executionMode: 'agent_planned',
+    };
+
+    renderWithI18n(
+      <Step1Basic
+        config={agentConfig}
+        onChange={mockOnChange}
+        errors={{}}
+      />
+    );
+
+    expect(screen.queryByText(i18n.t('workflow:step1.taskCountLabel'))).not.toBeInTheDocument();
+    expect(screen.queryByText(i18n.t('workflow:step1.importLabel'))).not.toBeInTheDocument();
+    expect(screen.getByText(i18n.t('workflow:step1.initialGoalLabel'))).toBeInTheDocument();
+  });
+
+  it('should switch execution mode when clicked', () => {
+    renderWithI18n(
+      <Step1Basic
+        config={defaultConfig}
+        onChange={mockOnChange}
+        errors={{}}
+      />
+    );
+
+    fireEvent.click(screen.getByText(i18n.t('workflow:step1.agentPlannedTitle')));
+    expect(mockOnChange).toHaveBeenCalledWith(
+      expect.objectContaining({ executionMode: 'agent_planned' })
+    );
   });
 
   it('should render task count selection buttons', () => {

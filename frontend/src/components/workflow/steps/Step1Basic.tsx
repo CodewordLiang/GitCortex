@@ -2,9 +2,15 @@ import React from 'react';
 import { Field, FieldLabel, FieldError } from '../../ui-new/primitives/Field';
 import { cn } from '@/lib/utils';
 import type { BasicConfig } from '../types';
+import type { WorkflowExecutionMode } from '../types';
 import { useTranslation } from 'react-i18next';
 
 const TASK_COUNT_OPTIONS = [1, 2, 3, 4];
+
+const EXECUTION_MODE_OPTIONS: { value: WorkflowExecutionMode; titleKey: string; descKey: string }[] = [
+  { value: 'diy', titleKey: 'step1.diyTitle', descKey: 'step1.diyDescription' },
+  { value: 'agent_planned', titleKey: 'step1.agentPlannedTitle', descKey: 'step1.agentPlannedDescription' },
+];
 
 interface Step1BasicProps {
   config: BasicConfig;
@@ -18,6 +24,7 @@ export const Step1Basic: React.FC<Step1BasicProps> = ({
   errors,
 }) => {
   const { t } = useTranslation('workflow');
+  const isAgentPlanned = config.executionMode === 'agent_planned';
 
   return (
     <div className="flex flex-col gap-base">
@@ -39,6 +46,35 @@ export const Step1Basic: React.FC<Step1BasicProps> = ({
       </Field>
 
       <Field>
+        <FieldLabel>{t('step1.modeLabel')}</FieldLabel>
+        <p className="text-sm text-low mb-half">{t('step1.modeHint')}</p>
+        <div className="grid grid-cols-2 gap-base">
+          {EXECUTION_MODE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onChange({ executionMode: opt.value })}
+              className={cn(
+                'flex flex-col items-start gap-half px-base py-base rounded-sm border text-left transition-colors cursor-pointer',
+                'hover:border-brand',
+                config.executionMode === opt.value
+                  ? 'border-brand bg-brand/10'
+                  : 'border-border bg-secondary'
+              )}
+            >
+              <span className={cn(
+                'text-base font-medium',
+                config.executionMode === opt.value ? 'text-high' : 'text-normal'
+              )}>
+                {t(opt.titleKey)}
+              </span>
+              <span className="text-sm text-low">{t(opt.descKey)}</span>
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      <Field>
         <FieldLabel>{t('step1.descriptionLabel')}</FieldLabel>
         <textarea
           value={config.description ?? ''}
@@ -54,79 +90,104 @@ export const Step1Basic: React.FC<Step1BasicProps> = ({
         />
       </Field>
 
-      <Field>
-        <FieldLabel>{t('step1.taskCountLabel')}</FieldLabel>
-        <div className="flex flex-wrap gap-base">
-          {TASK_COUNT_OPTIONS.map((count) => (
-            <button
-              key={count}
-              type="button"
-              onClick={() => onChange({ taskCount: count })}
-              className={cn(
-                'cursor-pointer px-base py-half rounded-sm border text-base transition-colors',
-                'hover:border-brand hover:text-high',
-                config.taskCount === count
-                  ? 'border-brand bg-brand/10 text-high'
-                  : 'border-border text-normal bg-secondary'
-              )}
-            >
-              {t('step1.taskCountOption', { count })}
-            </button>
-          ))}
-        </div>
-        <div className="mt-base flex items-center gap-base">
-          <span className="text-base text-low">{t('step1.customCountLabel')}</span>
-          <input
-            type="number"
-            min={5}
-            max={10}
-            value={
-              config.taskCount >= 5 && config.taskCount <= 10
-                ? config.taskCount
-                : ''
-            }
-            onChange={(e) => {
-              const value = Number.parseInt(e.target.value, 10);
-              if (!Number.isNaN(value) && value >= 5 && value <= 10) {
-                onChange({ taskCount: value });
-              }
-            }}
-            placeholder={t('step1.customCountPlaceholder')}
+      {isAgentPlanned && (
+        <Field>
+          <FieldLabel>{t('step1.initialGoalLabel')}</FieldLabel>
+          <p className="text-sm text-low mb-half">{t('step1.initialGoalHint')}</p>
+          <textarea
+            value={config.initialGoal ?? ''}
+            onChange={(e) => onChange({ initialGoal: e.target.value })}
+            placeholder={t('step1.initialGoalPlaceholder')}
+            rows={6}
             className={cn(
-              'w-20 bg-secondary rounded-sm border px-base py-half text-base text-normal',
+              'w-full bg-secondary rounded-sm border px-base py-half text-base text-normal',
               'placeholder:text-low placeholder:opacity-80',
-              'focus:outline-none focus:ring-1 focus:ring-brand'
+              'focus:outline-none focus:ring-1 focus:ring-brand',
+              'resize-none',
+              errors.initialGoal && 'border-error'
             )}
           />
-        </div>
-        {errors.taskCount && <FieldError>{t(errors.taskCount)}</FieldError>}
-      </Field>
+          {errors.initialGoal && <FieldError>{t(errors.initialGoal)}</FieldError>}
+        </Field>
+      )}
 
-      <Field>
-        <FieldLabel>{t('step1.importLabel')}</FieldLabel>
-        <div className="flex flex-col gap-base">
-          <label className="flex items-center gap-base cursor-pointer">
-            <input
-              type="radio"
-              name="importMode"
-              checked={!config.importFromKanban}
-              onChange={() => onChange({ importFromKanban: false })}
-              className="size-icon-sm accent-brand"
-            />
-            <span className="text-base text-normal">{t('step1.importNew')}</span>
-          </label>
-          <label className="flex items-center gap-base cursor-pointer">
-            <input
-              type="radio"
-              name="importMode"
-              checked={config.importFromKanban}
-              onChange={() => onChange({ importFromKanban: true })}
-              className="size-icon-sm accent-brand"
-            />
-            <span className="text-base text-normal">{t('step1.importKanban')}</span>
-          </label>
-        </div>
-      </Field>
+      {!isAgentPlanned && (
+        <>
+          <Field>
+            <FieldLabel>{t('step1.taskCountLabel')}</FieldLabel>
+            <div className="flex flex-wrap gap-base">
+              {TASK_COUNT_OPTIONS.map((count) => (
+                <button
+                  key={count}
+                  type="button"
+                  onClick={() => onChange({ taskCount: count })}
+                  className={cn(
+                    'cursor-pointer px-base py-half rounded-sm border text-base transition-colors',
+                    'hover:border-brand hover:text-high',
+                    config.taskCount === count
+                      ? 'border-brand bg-brand/10 text-high'
+                      : 'border-border text-normal bg-secondary'
+                  )}
+                >
+                  {t('step1.taskCountOption', { count })}
+                </button>
+              ))}
+            </div>
+            <div className="mt-base flex items-center gap-base">
+              <span className="text-base text-low">{t('step1.customCountLabel')}</span>
+              <input
+                type="number"
+                min={5}
+                max={10}
+                value={
+                  config.taskCount >= 5 && config.taskCount <= 10
+                    ? config.taskCount
+                    : ''
+                }
+                onChange={(e) => {
+                  const value = Number.parseInt(e.target.value, 10);
+                  if (!Number.isNaN(value) && value >= 5 && value <= 10) {
+                    onChange({ taskCount: value });
+                  }
+                }}
+                placeholder={t('step1.customCountPlaceholder')}
+                className={cn(
+                  'w-20 bg-secondary rounded-sm border px-base py-half text-base text-normal',
+                  'placeholder:text-low placeholder:opacity-80',
+                  'focus:outline-none focus:ring-1 focus:ring-brand'
+                )}
+              />
+            </div>
+            {errors.taskCount && <FieldError>{t(errors.taskCount)}</FieldError>}
+          </Field>
+
+          <Field>
+            <FieldLabel>{t('step1.importLabel')}</FieldLabel>
+            <div className="flex flex-col gap-base">
+              <label className="flex items-center gap-base cursor-pointer">
+                <input
+                  type="radio"
+                  name="importMode"
+                  checked={!config.importFromKanban}
+                  onChange={() => onChange({ importFromKanban: false })}
+                  className="size-icon-sm accent-brand"
+                />
+                <span className="text-base text-normal">{t('step1.importNew')}</span>
+              </label>
+              <label className="flex items-center gap-base cursor-pointer">
+                <input
+                  type="radio"
+                  name="importMode"
+                  checked={config.importFromKanban}
+                  onChange={() => onChange({ importFromKanban: true })}
+                  className="size-icon-sm accent-brand"
+                />
+                <span className="text-base text-normal">{t('step1.importKanban')}</span>
+              </label>
+            </div>
+          </Field>
+        </>
+      )}
     </div>
   );
 };

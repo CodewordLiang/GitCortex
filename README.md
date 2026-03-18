@@ -12,6 +12,16 @@ GitCortex is an upper-layer orchestration Agent that automatically commands mult
 
 ---
 
+## Core Design Philosophy
+
+**"1 senior engineer + GitCortex = the output of 1 senior + 3 mid-level + 10 junior engineers."**
+
+- **Upper-layer orchestration, not code generation.** The orchestrator Agent never writes code — it commands the best professional tools (Claude Code, Gemini CLI, Codex, etc.) to do the work.
+- **Non-invasive by design.** GitCortex does not replace any CLI, modify any configuration file, or define new tools. It inherits the full native ecosystem of every CLI it orchestrates — all slash commands, plugins, skills, and MCP servers work unchanged, forever.
+- **Git-driven event loop.** The orchestrator only consumes LLM tokens when a Git commit event occurs. Between events, it sleeps at zero cost. This saves 98%+ tokens compared to polling-based approaches.
+
+---
+
 ## Why GitCortex
 
 ### The Problem
@@ -34,7 +44,7 @@ GitCortex takes a fundamentally different approach: **one orchestrator Agent com
 | **Non-Invasive Ecosystem Compatibility** | Calls native CLI terminals directly. Any slash command, plugin, skill, or MCP that works in your terminal works here — forever. Switch from one AI workflow to another (e.g. Superpower, SDD) with zero migration cost. |
 | **Mixed CLI & Model per Task** | Different CLIs and different providers' models can work within the same task. Claude Code with Sonnet for coding, Gemini for review, GPT for fixing — all orchestrated automatically. |
 | **Git-Driven Event Loop** | Terminals signal completion via Git commits. The orchestrator sleeps between events, consuming near-zero tokens when idle. Saves 98%+ tokens compared to polling. |
-| **Chat-to-Ship (Vision)** | The ultimate goal: connect to a chat platform (Telegram, Feishu/Lark), describe your project in conversation, and GitCortex handles everything — task decomposition, terminal allocation, execution, and delivery. Not a toy demo, but real production-grade output. |
+| **Chat-to-Ship** | Connect to a chat platform (Telegram, Feishu/Lark), describe your project in conversation, and GitCortex handles everything — task decomposition, terminal allocation, execution, and delivery. |
 
 ---
 
@@ -52,6 +62,37 @@ GitCortex is **not** another multi-CLI collaboration tool. The core design goal 
 | Goal | Better CLI interop | "Developer not present" long-running autonomous development |
 
 GitCortex doesn't define tools — it commands the best tools to complete tasks most efficiently.
+
+---
+
+## Two Execution Modes
+
+### Manual Orchestration (DIY)
+
+You define the workflow graph upfront through a wizard:
+- Set tasks, Git branches, terminal assignments, CLI types, and models
+- Full control over task granularity and terminal roles
+- Best for well-understood projects with clear decomposition
+
+### AI Auto-Orchestration (Agent-Planned)
+
+You describe a project goal, and the orchestrator LLM autonomously:
+- Decomposes the project into tasks with dependency analysis
+- Creates terminals, assigns CLIs and models per task
+- Manages multi-phase execution (infrastructure → features → integration → finalization)
+- Merges completed branches and dispatches follow-up tasks
+- Best for complex projects where task decomposition itself requires intelligence
+
+### WorkspacePlanning: Multi-Turn Conversation
+
+Before creating a workflow, you can engage the AI in multi-turn planning:
+
+1. **Gathering** — You describe your project; the AI asks clarifying questions
+2. **Spec Ready** — Technical specification generated and presented for review
+3. **Confirmed** — You approve the spec
+4. **Materialized** — The spec is converted into a runnable agent_planned Workflow
+
+The Planning Draft captures both `requirement_summary` and `technical_spec`, which are combined into the workflow's initial goal for the orchestrator.
 
 ---
 
@@ -94,6 +135,7 @@ GitCortex doesn't define tools — it commands the best tools to complete tasks 
 | `TerminalLauncher` | Spawns native PTY processes with per-terminal environment isolation |
 | `GitWatcher` | Detects Git commits → publishes events → wakes the orchestrator |
 | `ResilientLLMClient` | Multi-provider round-robin with 5-failure circuit breaker and 60s probe recovery |
+| `MergeCoordinator` | Centralized merge handling with conflict detection and partial-failure tracking |
 | `ChatConnector` | Unified outbound messaging trait (Telegram, Feishu/Lark) |
 
 ---
@@ -102,34 +144,63 @@ GitCortex doesn't define tools — it commands the best tools to complete tasks 
 
 ### Implemented
 
+**Orchestration & Execution**
 - ✅ Upper-layer orchestrator Agent commanding full workflow lifecycle
+- ✅ Two execution modes: Manual (DIY) and AI Auto-Orchestration (Agent-Planned)
 - ✅ Multi-task parallel execution (5–10 tasks simultaneously)
-- ✅ **Built-in Quality Gates** with three-layer verification (Terminal → Task → Repo)
-- ✅ Local **SonarQube integration** for deep code analysis (zero external API dependencies)
+- ✅ WorkspacePlanning multi-turn LLM conversation for project scoping
+- ✅ Planning Draft lifecycle: gathering → spec_ready → confirmed → materialized
 - ✅ Serial quality gates within each task (code → review → fix)
+- ✅ Cross-terminal context handoff (previous terminal's work passed to the next)
+- ✅ ReviewCode / FixIssues / MergeBranch instruction execution
+- ✅ Automatic branch merging with conflict auto-resolution for non-overlapping changes
+- ✅ Post-merge branch base refresh for pending tasks
+
+**CLI & Model Support**
+- ✅ 9 AI CLIs supported (see table below)
 - ✅ Mixed CLI types within the same task (Claude Code + Gemini + Codex + more)
 - ✅ Mixed providers/models within the same CLI via CC-Switch integration
-- ✅ Native slash command system — supports all official and custom commands
-- ✅ Full native plugin/skill/MCP compatibility (whatever your CLI supports, GitCortex supports)
-- ✅ Git-driven event loop (98%+ token savings vs polling)
-- ✅ Web-based pseudo-terminal for real-time debugging and interaction
-- ✅ Cross-terminal context handoff (previous terminal's work passed to the next)
-- ✅ Automatic branch merging on workflow completion
-- ✅ ReviewCode / FixIssues / MergeBranch instruction execution
+- ✅ Per-terminal environment variable injection (no global config switching)
+- ✅ MCP server integration with per-CLI adapter (auto-generates correct config format)
+
+**Quality & Reliability**
+- ✅ **Built-in Quality Gates** with three-layer verification (Terminal → Task → Repo)
+- ✅ Built-in rule engine (runs without SonarQube), with optional local SonarQube integration
+- ✅ Policy snapshots and issue tracking per terminal and per workflow
 - ✅ LLM fault tolerance with graceful degradation (agent survives provider outages)
 - ✅ State persistence with crash recovery (agent resumes from DB after restart)
 - ✅ Multi-provider circuit breaker with automatic failover
 - ✅ Terminal-level provider failover (auto-spawns replacement terminal)
+
+**Developer Experience**
+- ✅ Web-based pseudo-terminal for real-time debugging and interaction
+- ✅ Native slash command system — supports all official and custom commands
+- ✅ Full native plugin/skill/MCP compatibility (whatever your CLI supports, GitCortex supports)
+- ✅ Git-driven event loop (98%+ token savings vs polling)
+- ✅ Setup Wizard for first-run environment detection and configuration
+- ✅ Internationalization: 6 languages (English, 简体中文, 繁體中文, 日本語, Español, 한국어)
+
+**Chat Platform Integration**
 - ✅ Telegram connector with conversation binding
-- ✅ Feishu (Lark) long-lived WebSocket connector
-- ✅ Planning Draft with multi-turn LLM conversation
-- ✅ Docker one-click deployment with installer/update scripts
-- ✅ Provider health monitoring API with WebSocket events
+- ✅ Feishu (Lark) long-lived WebSocket connector with session binding and bot event notifications
+
+**Deployment & Operations**
+- ✅ Docker one-click deployment with interactive installer/updater scripts
+- ✅ Split deployment architecture (Server + Runner + Redis via `docker-compose.split.yml`)
+- ✅ Provider health monitoring API with SSE and WebSocket events
+- ✅ Health check endpoints (`/healthz`, `/readyz`, `/api/health`)
+- ✅ Sentry error tracking integration
+- ✅ PostHog product analytics integration
+- ✅ Structured logging via `tracing` crate
+
+**Security**
+- ✅ API Token authentication (`GITCORTEX_API_TOKEN`)
+- ✅ AES-256-GCM encryption for API keys at rest (random nonce per encryption)
+- ✅ OAuth support for external service authentication
+- ✅ Per-request token validation middleware
 
 ### Roadmap
 
-- 🔜 Full conversational task decomposition (Agent decides task count and terminal allocation)
-- 🔜 Deeper chat platform integration (describe project → auto-execute → deliver)
 - 📋 Kubernetes deployment support
 - 📋 Container image size optimization
 
@@ -137,15 +208,17 @@ GitCortex doesn't define tools — it commands the best tools to complete tasks 
 
 ## Supported AI CLIs
 
-| CLI | Status | Model Switching |
-|---|---|---|
-| Claude Code | ✅ Supported | ✅ Via CC-Switch |
-| Gemini CLI | ✅ Supported | ✅ Via CC-Switch |
-| Codex | ✅ Supported | ✅ Via CC-Switch |
-| Amp | ✅ Supported | — |
-| Cursor Agent | ✅ Supported | — |
-| Qwen Code | ✅ Supported | — |
-| GitHub Copilot | ✅ Supported | — |
+| CLI | Status | Model Switching | MCP Config |
+|---|---|---|---|
+| Claude Code | ✅ Supported | ✅ Via CC-Switch | Passthrough |
+| Gemini CLI | ✅ Supported | ✅ Via CC-Switch | Gemini adapter |
+| Codex | ✅ Supported | ✅ Via CC-Switch | Codex adapter |
+| Amp | ✅ Supported | — | Passthrough |
+| Cursor Agent | ✅ Supported | — | Cursor adapter |
+| Qwen Code | ✅ Supported | — | — |
+| GitHub Copilot | ✅ Supported | — | Copilot adapter |
+| Droid | ✅ Supported | — | Passthrough |
+| Opencode | ✅ Supported | — | Opencode adapter |
 
 Any CLI that runs in a terminal and supports slash commands can be integrated.
 
@@ -185,9 +258,10 @@ Default URLs:
 - Frontend: `http://localhost:23457`
 - Backend API: `http://localhost:23456/api`
 
+On first launch, the **Setup Wizard** guides you through environment detection, AI model configuration, and project setup.
+
 **Optional: SonarQube Integration**
-GitCortex features an integrated, three-layer Quality Gate system using the SonarQube code analysis engine running locally.
-To spin up the local SonarQube instance, navigate to the docker directory:
+GitCortex features an integrated, three-layer Quality Gate system. The built-in rule engine works without SonarQube, but for deep code analysis you can spin up a local instance:
 ```bash
 cd docker/compose
 docker-compose -f docker-compose.dev.yml up -d sonarqube
@@ -203,14 +277,10 @@ cargo build --release -p server
 cd frontend && pnpm build && cd ..
 
 # 3. Set encryption key (required, exactly 32 characters)
-# Option A: Environment variable (recommended)
 # Linux/macOS:
 export GITCORTEX_ENCRYPTION_KEY="your-32-character-secret-key-here"
 # Windows PowerShell:
 $env:GITCORTEX_ENCRYPTION_KEY="your-32-character-secret-key-here"
-
-# Option B: In Docker, the .env file at docker/compose/.env is auto-generated
-# by the install script — no manual setup needed.
 
 # 4. Run
 ./target/release/server    # Linux/macOS
@@ -229,14 +299,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\docker\install-docker.ps1
 
 The installer supports interactive setup (mount path, keys, port, optional AI CLI install), `.env` reuse, and automatic handoff to update flow. The encryption key is configured automatically during the install wizard.
 
-**Optional: SonarQube Integration**
-GitCortex features an integrated, three-layer Quality Gate system using the SonarQube code analysis engine running locally.
-To spin up the local SonarQube instance, navigate to the docker directory:
-```bash
-cd docker/compose
-docker-compose -f docker-compose.dev.yml up -d sonarqube
-```
-
 ### Docker Update
 
 ```powershell
@@ -245,18 +307,42 @@ powershell -ExecutionPolicy Bypass -File .\scripts\docker\update-docker.ps1 -Pul
 
 Options: `-AllowDirty`, `-PullBaseImages`, `-SkipBuild`, `-SkipReadyCheck`
 
+### Split Deployment (Server + Runner)
+
+For teams that want to separate the web server from terminal execution:
+
+```bash
+cd docker/compose
+docker-compose -f docker-compose.split.yml up -d
+```
+
+This starts three services:
+- **Server** — API + frontend, handles orchestration logic
+- **Runner** — Executes PTY terminals with AI CLIs installed, communicates via gRPC
+- **Redis** — Message broker between server and runner
+
+Best for: CI/CD environments, multi-machine setups, or when AI CLIs need a different runtime than the web server.
+
 ---
 
 ## How It Works
 
 ### 1. Create a Workflow
 
-Through the web UI wizard, you:
+Through the web UI wizard, you either:
+
+**DIY Mode:**
 - Select a Git repository
 - Define parallel tasks (e.g. "auth module", "i18n", "dark theme")
 - Assign terminals to each task (choose CLI type + model for each)
 - Optionally configure slash commands for execution order
 - Configure the orchestrator Agent's LLM
+
+**Agent-Planned Mode:**
+- Select a Git repository
+- Describe the project goal in natural language
+- Configure the orchestrator Agent's LLM
+- The orchestrator will autonomously decompose, create tasks, and assign terminals
 
 ### 2. Prepare & Debug
 
@@ -275,6 +361,8 @@ Click **Start** and the orchestrator takes over:
 - Passes context from completed terminals to the next one (handoff notes)
 - Handles review cycles (ReviewCode → FixIssues → re-review)
 - Manages errors and retries automatically
+- Auto-resolves non-overlapping merge conflicts
+- Refreshes pending task branches after each merge
 - Merges all task branches when the workflow completes
 
 The orchestrator sleeps between Git events — it only wakes and consumes tokens when there's actual work to process.
@@ -285,26 +373,65 @@ All task branches are automatically merged to the target branch. The workflow is
 
 ---
 
+## MCP Integration
+
+GitCortex integrates with the Model Context Protocol (MCP) at two levels:
+
+### MCP Task Server
+GitCortex ships a built-in MCP Task Server (`mcp_task_server` binary) that exposes workflow and task management as MCP tools, enabling external AI agents to interact with GitCortex programmatically.
+
+### Per-CLI MCP Configuration
+When launching terminals, GitCortex auto-generates the correct MCP server configuration for each CLI type. Each CLI has its own adapter that transforms a unified server definition into the CLI-specific format:
+- **Claude Code / Amp / Droid** — Passthrough (native MCP format)
+- **Gemini CLI** — Gemini-specific adapter
+- **Codex** — Codex-specific adapter
+- **Cursor Agent** — Cursor-specific adapter
+- **Opencode** — Opencode-specific adapter
+- **GitHub Copilot** — Copilot-specific adapter
+
+---
+
+## Feishu (Lark) Integration
+
+GitCortex includes a full Feishu bot integration:
+
+- **WebSocket long-lived connection** for real-time event reception
+- **Session binding** — conversations are linked to specific workflows
+- **Bot event notifications** — workflow status changes, terminal completions, and errors are pushed to bound Feishu conversations
+- **Configuration** via frontend Settings UI with i18n support (en + zh-Hans)
+- **3 REST endpoints** for Feishu webhook, bot management, and session control
+
+---
+
+## Security
+
+| Feature | Details |
+|---|---|
+| **API Token Auth** | Enable `GITCORTEX_API_TOKEN` env var; all API routes require `Authorization: Bearer <token>` |
+| **AES-256-GCM Encryption** | API keys encrypted at rest with random nonce per encryption; key from `GITCORTEX_ENCRYPTION_KEY` (32 bytes) |
+| **OAuth Support** | OAuth client for external service authentication |
+| **Approval Gates** | Interactive prompts for destructive operations; user confirmation via WebSocket |
+| **Per-Request Validation** | `require_api_token` middleware on all routes when token is configured |
+
+---
+
+## Observability
+
+| Feature | Details |
+|---|---|
+| **Sentry** | Error tracking integration via `utils::sentry` |
+| **PostHog** | Product analytics integration |
+| **Structured Logging** | `tracing` crate with configurable levels via `RUST_LOG` |
+| **Health Endpoints** | `/healthz` (liveness), `/readyz` (readiness: DB + assets + temp dir + Feishu), `/api/health` (legacy) |
+| **CLI Health Monitoring** | SSE endpoint for real-time provider health status |
+
+---
+
 ## Data Safety
 
 - **Deleting a project** only removes database records. Repository files on disk are never touched.
 - **Unbinding a repository** only removes the database link. The Git repository remains intact.
 - **Project-repo binding** stores a reference path only. No file system operations on bind/unbind.
-
----
-
-## Health Check
-
-```bash
-curl http://localhost:23456/readyz
-curl http://localhost:23456/api/health
-```
-
-With API token enabled:
-
-```bash
-curl http://localhost:23456/api/health -H "Authorization: Bearer <token>"
-```
 
 ---
 
@@ -317,6 +444,14 @@ GitCortex includes a built-in quality gate engine that automatically verifies co
 | **Terminal Gate** | Each checkpoint commit | Changed files only — cargo check, clippy, tsc, tests |
 | **Branch Gate** | Last terminal in a task passes | Full task branch — all checks + lint |
 | **Repo Gate** | Before merge to main / CI | Full repo — all checks + SonarQube analysis |
+
+### Built-in Rule Engine
+
+The quality gate includes a built-in rule engine that works **without requiring SonarQube**:
+- Runs configurable lint checks (Rust clippy, TypeScript tsc, ESLint)
+- Tracks policy snapshots per terminal and per workflow
+- Issue tracking with structured fix instructions sent back to terminals
+- SonarQube is optional — adds deep static analysis when available
 
 ### Modes
 
@@ -373,6 +508,7 @@ pnpm run quality:sonar
 | Terminal | xterm.js + native PTY (WebSocket bridge) |
 | Real-time | WebSocket (workflow events + terminal streams) |
 | Type Safety | Rust → TypeScript auto-generation via `ts-rs` |
+| i18n | 6 languages (en, zh-Hans, zh-Hant, ja, es, ko) |
 
 ---
 
@@ -382,27 +518,52 @@ pnpm run quality:sonar
 GitCortex/
 ├── crates/                    # Rust workspace
 │   ├── db/                    # Database layer (models, migrations, DAO)
-│   ├── server/                # Axum HTTP/WebSocket server
+│   ├── server/                # Axum HTTP/WebSocket server + MCP Task Server
 │   ├── services/              # Business logic
 │   │   ├── orchestrator/      # Agent, Runtime, State, Error handling
 │   │   ├── terminal/          # Launcher, Bridge, Prompt watcher
 │   │   ├── git_watcher.rs     # Git commit monitoring
 │   │   ├── cc_switch.rs       # CLI/model configuration switching
 │   │   ├── message_bus.rs     # Event routing
+│   │   ├── merge_coordinator.rs # Centralized merge handling
 │   │   ├── feishu.rs          # Feishu service integration
 │   │   └── chat_connector.rs  # Unified chat trait
-│   ├── executors/             # CLI integrations
-│   └── feishu-connector/      # Feishu WebSocket client
+│   ├── cc-switch/             # CLI model switching library
+│   ├── executors/             # CLI integrations + MCP config adapters
+│   ├── feishu-connector/      # Feishu WebSocket client
+│   ├── quality/               # Code quality gate engine
+│   ├── runner/                # gRPC remote Runner for split deployment
+│   ├── review/                # Code review CLI
+│   ├── deployment/            # Deployment tooling
+│   └── utils/                 # Shared utilities (encryption, OAuth, analytics, Sentry)
 ├── frontend/                  # React application
 │   ├── src/
-│   │   ├── components/        # UI components (board, workflow, ui-new)
+│   │   ├── components/        # UI components (board, workflow, setup wizard, ui-new)
 │   │   ├── hooks/             # React Query hooks
 │   │   ├── stores/            # Zustand stores (WebSocket, UI state)
+│   │   ├── i18n/              # 6 locales (en, zh-Hans, zh-Hant, ja, es, ko)
 │   │   └── pages/             # Route components
 │   └── CLAUDE.md              # Frontend design guidelines
-├── shared/                    # Auto-generated TypeScript types
-├── scripts/                   # Dev and Docker scripts
-└── docs/                      # Documentation
+├── shared/                    # Auto-generated TypeScript types (Rust → TS)
+├── quality/                   # Quality gate profiles and baselines
+├── scripts/                   # Dev, Docker, and deployment scripts
+└── docs/                      # Documentation and architecture decisions
+```
+
+---
+
+## Health Check
+
+```bash
+curl http://localhost:23456/healthz    # Liveness (stateless, always 200)
+curl http://localhost:23456/readyz     # Readiness (checks DB, assets, temp dir, Feishu)
+curl http://localhost:23456/api/health # Legacy health check
+```
+
+With API token enabled:
+
+```bash
+curl http://localhost:23456/api/health -H "Authorization: Bearer <token>"
 ```
 
 ---

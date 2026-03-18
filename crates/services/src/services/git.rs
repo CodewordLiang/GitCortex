@@ -1404,14 +1404,31 @@ impl GitService {
         let mut merge_opts = git2::MergeOptions::new();
         // Safety and correctness options
         merge_opts.find_renames(true); // improve rename handling
-        merge_opts.fail_on_conflict(true); // bail out instead of generating conflicted index
+        // Allow git2 to auto-resolve non-overlapping changes in the same file
+        merge_opts.fail_on_conflict(false);
         let mut index = repo.merge_commits(base_commit, task_commit, Some(&merge_opts))?;
 
-        // If there are conflicts, return an error
+        // If there are true conflicts (overlapping edits), return an error with file list
         if index.has_conflicts() {
-            return Err(GitServiceError::MergeConflicts(
-                "Merge failed due to conflicts. Please resolve conflicts manually.".to_string(),
-            ));
+            let mut seen = std::collections::HashSet::new();
+            let unique_files: Vec<String> = index
+                .conflicts()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| {
+                    let c = c.ok()?;
+                    c.our
+                        .or(c.their)
+                        .or(c.ancestor)
+                        .and_then(|entry| String::from_utf8(entry.path).ok())
+                })
+                .filter(|f| seen.insert(f.clone()))
+                .collect();
+            return Err(GitServiceError::MergeConflicts(format!(
+                "Conflicts in {} file(s): {}",
+                unique_files.len(),
+                unique_files.join(", ")
+            )));
         }
 
         // Write the merged tree back to the repository
