@@ -1,8 +1,7 @@
 import React from 'react';
 import { Field, FieldLabel, FieldError } from '../../ui-new/primitives/Field';
 import { cn } from '@/lib/utils';
-import type { BasicConfig } from '../types';
-import type { WorkflowExecutionMode } from '../types';
+import type { BasicConfig, WorkflowExecutionMode } from '../types';
 import { useTranslation } from 'react-i18next';
 
 const TASK_COUNT_OPTIONS = [1, 2, 3, 4];
