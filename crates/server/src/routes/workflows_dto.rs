@@ -492,6 +492,7 @@ mod conversion_tests {
             completed_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            pause_reason: None,
         };
 
         let dto = WorkflowDetailDto::from_workflow(&workflow, &[], &[]);

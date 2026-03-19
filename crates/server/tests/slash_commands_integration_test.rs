@@ -209,6 +209,7 @@ async fn test_workflow_commands_with_presets() {
         completed_at: None,
         created_at: now,
         updated_at: now,
+        pause_reason: None,
     };
 
     Workflow::create(pool, &workflow)
@@ -395,6 +396,7 @@ async fn test_full_workflow_with_commands_api() {
         completed_at: None,
         created_at: now,
         updated_at: now,
+        pause_reason: None,
     };
 
     Workflow::create(pool, &workflow)
@@ -464,6 +466,7 @@ async fn test_workflow_without_commands() {
         completed_at: None,
         created_at: now,
         updated_at: now,
+        pause_reason: None,
     };
 
     Workflow::create(pool, &workflow)
