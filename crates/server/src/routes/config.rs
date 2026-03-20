@@ -807,11 +807,24 @@ pub struct SystemPrerequisites {
 }
 
 fn detect_tool_version(cmd: &str, args: &[&str]) -> (bool, Option<String>) {
-    let result = std::process::Command::new(cmd)
-        .args(args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output();
+    // On Windows, use cmd.exe /C to handle .cmd/.bat files (e.g. npm.cmd)
+    let result = if cfg!(target_os = "windows") {
+        let full_cmd = std::iter::once(cmd.to_string())
+            .chain(args.iter().map(|a| a.to_string()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        std::process::Command::new("cmd.exe")
+            .args(["/C", &full_cmd])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+    } else {
+        std::process::Command::new(cmd)
+            .args(args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+    };
 
     match result {
         Ok(output) if output.status.success() => {
