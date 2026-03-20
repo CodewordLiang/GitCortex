@@ -10,6 +10,7 @@ import {
   PlugsIcon,
   ChatTeardropDotsIcon,
   BuildingsIcon,
+  HardDrivesIcon,
 } from '@phosphor-icons/react';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { SettingsLayout, type SettingsNavItem } from '../views/SettingsLayout';
@@ -56,6 +57,11 @@ export function SettingsLayoutContainer() {
         path: 'feishu',
         label: t('settings:newDesign.nav.feishu'),
         icon: ChatTeardropDotsIcon,
+      },
+      {
+        path: 'runtime',
+        label: t('settings:newDesign.nav.runtime', 'Runtime'),
+        icon: HardDrivesIcon,
       },
       {
         path: 'organizations',

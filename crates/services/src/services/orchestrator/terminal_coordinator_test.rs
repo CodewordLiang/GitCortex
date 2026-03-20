@@ -90,6 +90,10 @@ async fn create_cli_and_model(
         is_official: true,
         created_at: now,
         updated_at: now,
+        encrypted_api_key: None,
+        base_url: None,
+        api_type: None,
+        has_api_key: false,
     };
 
     sqlx::query(

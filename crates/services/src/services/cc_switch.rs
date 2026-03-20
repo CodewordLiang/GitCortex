@@ -1262,6 +1262,10 @@ mod tests {
             is_official: false,
             created_at: now,
             updated_at: now,
+            encrypted_api_key: None,
+            base_url: None,
+            api_type: None,
+            has_api_key: false,
         }
     }
 

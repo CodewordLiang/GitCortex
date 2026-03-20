@@ -78,5 +78,36 @@
       "getStartedButton": "开始使用",
       "rerunHint": "您可以随时在设置中重新运行此设置向导。"
     }
+  },
+  "firstRun": {
+    "steps": {
+      "welcome": "欢迎",
+      "environment": "环境",
+      "apikeys": "API 密钥",
+      "done": "完成"
+    },
+    "skipButton": "跳过，稍后配置",
+    "continueButton": "继续",
+    "backButton": "返回",
+    "welcome": {
+      "title": "欢迎使用 GitCortex",
+      "subtitle": "安装已就绪，让我们验证一切正常运行。",
+      "description": "GitCortex 已预装所有必需工具。此向导将帮助您验证安装并配置所需的 AI CLI API 密钥。"
+    },
+    "environment": {
+      "title": "环境状态",
+      "subtitle": "已预装的 CLI 工具及其状态。",
+      "loading": "正在检测环境..."
+    },
+    "apiKey": {
+      "title": "配置 API 密钥",
+      "subtitle": "API 密钥在 设置 > 模型 中按模型配置。您可以现在设置或稍后再配置。",
+      "hint": "每个 AI CLI 使用独立的 API 密钥。设置完成后前往 设置 > 模型 配置您需要使用的提供商（Anthropic、OpenAI、Google 等）的 API 密钥。"
+    },
+    "done": {
+      "title": "一切就绪！",
+      "subtitle": "GitCortex 已准备就绪。您随时可以在设置中配置 API 密钥、更新 CLI 工具或更改 npm 镜像。",
+      "startButton": "开始使用"
+    }
   }
 }

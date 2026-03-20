@@ -752,7 +752,19 @@ createdAt: string,
 /**
  * Updated timestamp
  */
-updatedAt: string, };
+updatedAt: string, 
+/**
+ * Base URL for the API provider
+ */
+baseUrl?: string, 
+/**
+ * API type (openai, anthropic, google, openai-compatible)
+ */
+apiType?: string, 
+/**
+ * Whether this model config has an API key stored (computed, not in DB)
+ */
+hasApiKey: boolean, };
 
 export type CliDetectionStatus = { 
 /**

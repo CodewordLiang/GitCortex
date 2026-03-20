@@ -35,12 +35,17 @@ const DEV_DEFAULT_ENCRYPTION_KEY: &str = "12345678901234567890123456789012";
 fn ensure_api_token_in_release() {
     if !cfg!(debug_assertions) {
         // SEC-002: In release mode, require GITCORTEX_API_TOKEN — fail closed
+        // Exception: local installer mode (localhost-only, no external access)
+        if std::env::var("GITCORTEX_LOCAL_MODE").is_ok() {
+            return;
+        }
         match std::env::var("GITCORTEX_API_TOKEN") {
             Ok(value) if !value.trim().is_empty() => {}
             Ok(_) | Err(_) => {
                 panic!(
                     "GITCORTEX_API_TOKEN is not set or is empty. \
-                     An API token is required in release mode to prevent unauthenticated access."
+                     An API token is required in release mode to prevent unauthenticated access. \
+                     Set GITCORTEX_LOCAL_MODE=1 to skip this check for localhost-only installations."
                 );
             }
         }
@@ -114,7 +119,7 @@ async fn main() -> Result<(), GitCortexError> {
     ensure_api_token_in_release();
 
     // Install rustls crypto provider before any TLS operations
-    rustls::crypto::aws_lc_rs::default_provider()
+    rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
 

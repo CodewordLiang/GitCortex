@@ -78,5 +78,36 @@
       "getStartedButton": "Get Started",
       "rerunHint": "You can re-run this setup anytime from Settings."
     }
+  },
+  "firstRun": {
+    "steps": {
+      "welcome": "Welcome",
+      "environment": "Environment",
+      "apikeys": "API Keys",
+      "done": "Done"
+    },
+    "skipButton": "Skip, configure later",
+    "continueButton": "Continue",
+    "backButton": "Back",
+    "welcome": {
+      "title": "Welcome to GitCortex",
+      "subtitle": "Your installation is ready. Let's verify everything is working.",
+      "description": "GitCortex has been installed with all required tools bundled. This wizard will help you verify the installation and configure API keys for the AI CLIs you want to use."
+    },
+    "environment": {
+      "title": "Environment Status",
+      "subtitle": "Pre-installed CLI tools and their status.",
+      "loading": "Checking environment..."
+    },
+    "apiKey": {
+      "title": "Configure API Keys",
+      "subtitle": "API keys are configured per-model in Settings > Models. You can set them up now or later.",
+      "hint": "Each AI CLI uses its own API key. Go to Settings > Models after setup to configure API keys for the providers you want to use (Anthropic, OpenAI, Google, etc.)."
+    },
+    "done": {
+      "title": "All Set!",
+      "subtitle": "GitCortex is ready to use. You can always revisit settings to configure API keys, update CLI tools, or change the npm mirror.",
+      "startButton": "Get Started"
+    }
   }
 }

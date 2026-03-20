@@ -15,6 +15,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use db::models::{CliDetectionStatus, CliType, CliType as CliTypeModel, ModelConfig};
+use axum::routing::put;
 use deployment::Deployment;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -117,6 +118,10 @@ pub fn cli_types_routes() -> Router<DeploymentImpl> {
         .route("/detect", get(detect_cli_types))
         .route("/{cli_type_id}/models", get(list_models_for_cli))
         .route(
+            "/{cli_type_id}/models/{model_id}/credentials",
+            put(update_model_credentials),
+        )
+        .route(
             "/{cli_type_id}/install",
             post(install_cli).delete(uninstall_cli),
         )
@@ -164,6 +169,66 @@ async fn list_models_for_cli(
 ) -> Result<ResponseJson<Vec<ModelConfig>>, ApiError> {
     let models = ModelConfig::find_by_cli_type(&deployment.db().pool, &cli_type_id).await?;
     Ok(ResponseJson(models))
+}
+
+// ---------------------------------------------------------------------------
+// Model credentials endpoint
+// ---------------------------------------------------------------------------
+
+/// Request body for updating model credentials
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCredentialsRequest {
+    api_key: String,
+    base_url: Option<String>,
+    api_type: String,
+}
+
+/// PUT /api/cli_types/:cli_type_id/models/:model_id/credentials
+/// Save API credentials for a model config (used by workspace mode)
+async fn update_model_credentials(
+    State(deployment): State<DeploymentImpl>,
+    Path((cli_type_id, model_id)): Path<(String, String)>,
+    axum::extract::Json(payload): axum::extract::Json<UpdateCredentialsRequest>,
+) -> Result<ResponseJson<Value>, ApiError> {
+    // Validate model belongs to cli_type
+    let model = ModelConfig::find_by_id(&deployment.db().pool, &model_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Model config not found: {model_id}")))?;
+
+    if model.cli_type_id != cli_type_id {
+        return Err(ApiError::BadRequest(format!(
+            "Model {model_id} does not belong to CLI type {cli_type_id}"
+        )));
+    }
+
+    // Encrypt the API key
+    let mut temp_model = model;
+    temp_model
+        .set_api_key(&payload.api_key)
+        .map_err(|e| ApiError::Internal(format!("Failed to encrypt API key: {e}")))?;
+
+    let encrypted = temp_model.encrypted_api_key.as_deref().ok_or_else(|| {
+        ApiError::Internal("Encryption produced no output".to_string())
+    })?;
+
+    ModelConfig::update_credentials(
+        &deployment.db().pool,
+        &model_id,
+        encrypted,
+        payload.base_url.as_deref(),
+        &payload.api_type,
+    )
+    .await?;
+
+    tracing::info!(
+        model_id = %model_id,
+        cli_type_id = %cli_type_id,
+        api_type = %payload.api_type,
+        "Model credentials saved"
+    );
+
+    Ok(ResponseJson(json!({ "saved": true })))
 }
 
 // ---------------------------------------------------------------------------

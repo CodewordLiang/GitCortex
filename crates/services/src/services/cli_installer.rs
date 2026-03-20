@@ -83,11 +83,49 @@ impl CliInstaller {
         self.run_script("uninstall", cli_name).await
     }
 
-    /// Resolve the path to `install-single-cli.sh`.
+    /// Resolve the path to the install script.
     ///
-    /// Checks the Docker production path first, then falls back to the
+    /// On Windows, looks for `install-single-cli.ps1` (PowerShell script).
+    /// On Unix, looks for `install-single-cli.sh` (bash script).
+    /// Checks the Docker/installed path first, then falls back to the
     /// development path relative to the working directory.
     fn resolve_script_path() -> Option<PathBuf> {
+        if cfg!(target_os = "windows") {
+            Self::resolve_windows_script_path()
+        } else {
+            Self::resolve_unix_script_path()
+        }
+    }
+
+    /// Resolve the PowerShell install script path on Windows.
+    fn resolve_windows_script_path() -> Option<PathBuf> {
+        let mut candidates = Vec::new();
+
+        // Check GITCORTEX_INSTALL_DIR (set by installer)
+        if let Ok(install_dir) = std::env::var("GITCORTEX_INSTALL_DIR") {
+            candidates.push(
+                PathBuf::from(&install_dir).join("scripts/install-single-cli.ps1"),
+            );
+        }
+
+        // Check relative to executable
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                candidates.push(exe_dir.join("scripts/install-single-cli.ps1"));
+            }
+        }
+
+        // Development paths
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join("installer/scripts/install-single-cli.ps1"));
+        }
+        candidates.push(PathBuf::from("installer/scripts/install-single-cli.ps1"));
+
+        candidates.into_iter().find(|path| path.is_file())
+    }
+
+    /// Resolve the bash install script path on Unix.
+    fn resolve_unix_script_path() -> Option<PathBuf> {
         let mut candidates = vec![PathBuf::from(
             "/opt/gitcortex/install/install-single-cli.sh",
         )];
@@ -119,7 +157,11 @@ impl CliInstaller {
         // Validate cli_name against whitelist before doing anything else.
         Self::validate_cli_name(cli_name)?;
 
-        let script_path = Self::resolve_script_path().context("install-single-cli.sh not found")?;
+        let script_path = Self::resolve_script_path().context(if cfg!(target_os = "windows") {
+            "install-single-cli.ps1 not found"
+        } else {
+            "install-single-cli.sh not found"
+        })?;
 
         // Acquire (or create) the per-CLI lock.
         let cli_lock = {
@@ -177,14 +219,29 @@ impl CliInstaller {
         cli_name: &str,
         tx: &tokio::sync::mpsc::Sender<InstallOutputLine>,
     ) -> Result<()> {
-        let mut child = Command::new("bash")
-            .arg(script_path)
-            .arg(action)
-            .arg(cli_name)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .context("Failed to spawn install-single-cli.sh")?;
+        let mut child = if cfg!(target_os = "windows") {
+            // On Windows, use PowerShell to execute the .ps1 script
+            Command::new("powershell.exe")
+                .arg("-ExecutionPolicy")
+                .arg("Bypass")
+                .arg("-File")
+                .arg(script_path)
+                .arg(action)
+                .arg(cli_name)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .context("Failed to spawn install-single-cli.ps1")?
+        } else {
+            Command::new("bash")
+                .arg(script_path)
+                .arg(action)
+                .arg(cli_name)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .context("Failed to spawn install-single-cli.sh")?
+        };
 
         let stdout = child.stdout.take().context("Failed to capture stdout")?;
         let stderr = child.stderr.take().context("Failed to capture stderr")?;

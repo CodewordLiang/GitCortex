@@ -8,6 +8,7 @@ import { useAuth } from '@/hooks';
 import { usePreviousPath } from '@/hooks/usePreviousPath';
 
 import { SetupWizardShell } from '@/components/setup';
+import { FirstRunWizard } from '@/pages/ui-new/FirstRunWizard';
 import { SettingsLayoutContainer } from '@/components/ui-new/containers/SettingsLayoutContainer';
 import {
   GeneralSettingsNew,
@@ -18,6 +19,7 @@ import {
   McpSettingsNew,
   FeishuSettingsNew,
   OrganizationSettingsNew,
+  RuntimeSettingsNew,
 } from '@/pages/ui-new/settings';
 import { UserSystemProvider, useUserSystem } from '@/components/ConfigProvider';
 import { ThemeProvider } from '@/components/ThemeProvider';
@@ -141,6 +143,16 @@ function AppContent() {
               }
             />
 
+            {/* ========== FIRST RUN WIZARD (post-install, full-page) ========== */}
+            <Route
+              path="/first-run"
+              element={
+                <NewDesignScope>
+                  <FirstRunWizard />
+                </NewDesignScope>
+              }
+            />
+
             {/* ========== NEW DESIGN SETTINGS ========== */}
             <Route
               path="/settings"
@@ -159,6 +171,7 @@ function AppContent() {
               <Route path="mcp" element={<McpSettingsNew />} />
               <Route path="feishu" element={<FeishuSettingsNew />} />
               <Route path="organizations" element={<OrganizationSettingsNew />} />
+              <Route path="runtime" element={<RuntimeSettingsNew />} />
             </Route>
 
             {/* ========== LEGACY DESIGN ROUTES ========== */}

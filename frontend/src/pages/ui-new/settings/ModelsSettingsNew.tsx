@@ -84,6 +84,31 @@ export function ModelsSettingsNew() {
         await updateAndSaveConfig({
           workflow_model_library: nextModels,
         } as Partial<NonNullable<typeof config>>);
+
+        // Persist API credentials to model_config table for workspace mode auth
+        for (const model of nextModels) {
+          if (model.apiKey && model.id && model.cliTypeId) {
+            try {
+              await fetch(
+                `/api/cli_types/${encodeURIComponent(model.cliTypeId)}/models/${encodeURIComponent(model.id)}/credentials`,
+                {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    apiKey: model.apiKey,
+                    baseUrl: model.baseUrl || null,
+                    apiType: model.apiType,
+                  }),
+                }
+              );
+            } catch (credErr) {
+              console.warn(
+                `Failed to persist credentials for model ${model.id}:`,
+                credErr
+              );
+            }
+          }
+        }
       } catch (error) {
         console.error('Failed to save workflow model library', error);
         setWorkflowModelsError(t('settings.general.save.error'));

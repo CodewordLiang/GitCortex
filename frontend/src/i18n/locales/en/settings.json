@@ -540,6 +540,7 @@
       "models": "Models",
       "mcp": "MCP Servers",
       "feishu": "Feishu",
+      "runtime": "Runtime",
       "organizations": "Organizations"
     },
     "common": {

@@ -540,6 +540,7 @@
       "models": "模型",
       "mcp": "MCP 服务器",
       "feishu": "飞书",
+      "runtime": "运行环境",
       "organizations": "组织"
     },
     "common": {

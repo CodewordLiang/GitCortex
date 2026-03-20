@@ -1,0 +1,190 @@
+# ============================================================================
+# CI Workflow: Windows Installer Build
+# Triggers: push tag v*.*.*
+# Jobs: build-installer
+# Produces: GitCortex-Setup-v{version}.exe uploaded to GitHub Release
+# ============================================================================
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+    # --- Rust setup ---
+    - name: Setup Rust environment
+      uses: dtolnay/rust-toolchain@a54c7afa936fefeb4456b2dd8068152669aa8203 # stable
+      with:
+        toolchain: nightly-2025-12-04
+        components: clippy
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-installer-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-installer-
+
+    # --- Node.js setup ---
+    - name: Setup Node.js
+      uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+      with:
+        node-version: '22'
+
+    - name: Install pnpm
+      run: npm install -g pnpm@10.13.1
+
+    - name: Install frontend dependencies
+      run: pnpm install
+
+    # --- Build frontend ---
+    - name: Build frontend
+      working-directory: frontend
+      run: pnpm build
+
+    # --- Build Rust binaries ---
+    - name: Build gitcortex-server
+      run: cargo build --release -p server
+
+    - name: Build gitcortex-tray
+      run: cargo build --release -p gitcortex-tray
+
+    # --- Prepare installer build directory ---
+    - name: Prepare build directory
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Path installer/build -Force
+        Copy-Item target/release/server.exe installer/build/gitcortex-server.exe
+        Copy-Item target/release/gitcortex-tray.exe installer/build/gitcortex-tray.exe
+
+    # --- Download bundled dependencies ---
+    - name: Download Node.js portable
+      shell: pwsh
+      run: |
+        $NodeVersion = "22.12.0"
+        $url = "https://nodejs.org/dist/v$NodeVersion/node-v$NodeVersion-win-x64.zip"
+        Invoke-WebRequest -Uri $url -OutFile installer/build/node.zip -UseBasicParsing
+        Expand-Archive installer/build/node.zip -DestinationPath installer/build/node-extract
+        $src = Get-ChildItem installer/build/node-extract -Directory | Select-Object -First 1
+        Move-Item $src.FullName installer/build/node_portable
+        Remove-Item installer/build/node-extract -Recurse -Force
+        Remove-Item installer/build/node.zip
+
+    - name: Download MinGit
+      shell: pwsh
+      run: |
+        $MinGitVersion = "2.47.1"
+        $url = "https://github.com/git-for-windows/git/releases/download/v${MinGitVersion}.windows.1/MinGit-${MinGitVersion}-64-bit.zip"
+        Invoke-WebRequest -Uri $url -OutFile installer/build/mingit.zip -UseBasicParsing
+        Expand-Archive installer/build/mingit.zip -DestinationPath installer/build/mingit
+        Remove-Item installer/build/mingit.zip
+
+    - name: Download GitHub CLI
+      shell: pwsh
+      run: |
+        $GhVersion = "2.63.2"
+        $url = "https://github.com/cli/cli/releases/download/v$GhVersion/gh_${GhVersion}_windows_amd64.zip"
+        Invoke-WebRequest -Uri $url -OutFile installer/build/gh.zip -UseBasicParsing
+        Expand-Archive installer/build/gh.zip -DestinationPath installer/build/gh-extract
+        $src = Get-ChildItem installer/build/gh-extract -Directory | Select-Object -First 1
+        $binSrc = Join-Path $src.FullName "bin"
+        New-Item -ItemType Directory -Path installer/build/gh -Force
+        if (Test-Path $binSrc) {
+          Copy-Item "$binSrc/*" installer/build/gh/ -Recurse
+        } else {
+          Copy-Item "$($src.FullName)/*" installer/build/gh/ -Recurse
+        }
+        Remove-Item installer/build/gh-extract -Recurse -Force
+        Remove-Item installer/build/gh.zip
+
+    - name: Download VC++ Runtime
+      shell: pwsh
+      run: |
+        Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile installer/build/vc_redist.x64.exe -UseBasicParsing
+
+    - name: Download AI CLI npm packages
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Path installer/build/cli-cache -Force
+        $packages = @(
+          "@anthropic-ai/claude-code",
+          "@openai/codex",
+          "@google/gemini-cli",
+          "@sourcegraph/amp",
+          "@qwen-code/qwen-code",
+          "opencode-ai",
+          "@kilocode/cli",
+          "cursor-agent"
+        )
+        Push-Location installer/build/cli-cache
+        foreach ($pkg in $packages) {
+          Write-Host "Packing $pkg..."
+          try {
+            & npm pack $pkg 2>&1 | Out-Null
+          } catch {
+            Write-Host "Warning: Failed to pack $pkg"
+          }
+        }
+        Pop-Location
+
+    # --- Create placeholder icon if not present ---
+    - name: Create placeholder icon
+      shell: pwsh
+      run: |
+        if (-not (Test-Path installer/assets/gitcortex.ico)) {
+          # Create a minimal valid ICO file (1x1 pixel, for CI builds)
+          # In production, replace with a real icon
+          $iconBytes = [byte[]]@(
+            0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x10,
+            0x00, 0x00, 0x01, 0x00, 0x20, 0x00, 0x68, 0x04,
+            0x00, 0x00, 0x16, 0x00, 0x00, 0x00
+          )
+          # Write a minimal ICO header; real icon should be provided
+          [System.IO.File]::WriteAllBytes("installer/assets/gitcortex.ico", $iconBytes)
+          Write-Host "Created placeholder icon (replace with real .ico for production)"
+        }
+
+    # --- Install Inno Setup ---
+    - name: Install Inno Setup
+      shell: pwsh
+      run: |
+        choco install innosetup -y --no-progress
+        Write-Host "Inno Setup installed"
+
+    # --- Build installer ---
+    - name: Build installer
+      shell: pwsh
+      run: |
+        $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+        if (-not (Test-Path $iscc)) {
+          # Try chocolatey path
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+        }
+        if (-not $iscc) {
+          Write-Error "ISCC.exe not found"
+          exit 1
+        }
+        & $iscc installer/gitcortex.iss
+
+    # --- Upload to release ---
+    - name: Upload installer to release
+      uses: softprops/action-gh-release@c95fe1c8d4547f8c42bd29fae893987ccd1e411b # v2.2.1
+      with:
+        files: installer/output/GitCortex-Setup-*.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

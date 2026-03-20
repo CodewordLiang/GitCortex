@@ -55,19 +55,22 @@ pub async fn require_api_token(req: Request, next: Next) -> Result<Response, Res
     let token = match std::env::var("GITCORTEX_API_TOKEN") {
         Ok(value) if !value.trim().is_empty() => value,
         Err(_) => {
-            // SEC-002: Warn prominently in debug mode when token is missing
-            tracing::warn!(
-                "SEC-002: GITCORTEX_API_TOKEN not set — all requests are unauthenticated! \
-                 Set GITCORTEX_API_TOKEN to secure API access."
-            );
+            // SEC-002: In local mode (installer), suppress per-request warnings
+            if std::env::var("GITCORTEX_LOCAL_MODE").is_err() {
+                tracing::warn!(
+                    "SEC-002: GITCORTEX_API_TOKEN not set — all requests are unauthenticated! \
+                     Set GITCORTEX_API_TOKEN to secure API access."
+                );
+            }
             return Ok(next.run(req).await);
         }
         _ => {
-            // SEC-002: Warn prominently in debug mode when token is empty
-            tracing::warn!(
-                "SEC-002: GITCORTEX_API_TOKEN is empty — all requests are unauthenticated! \
-                 Set a non-empty GITCORTEX_API_TOKEN to secure API access."
-            );
+            if std::env::var("GITCORTEX_LOCAL_MODE").is_err() {
+                tracing::warn!(
+                    "SEC-002: GITCORTEX_API_TOKEN is empty — all requests are unauthenticated! \
+                     Set a non-empty GITCORTEX_API_TOKEN to secure API access."
+                );
+            }
             return Ok(next.run(req).await);
         }
     };

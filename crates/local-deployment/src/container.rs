@@ -874,13 +874,104 @@ impl LocalContainerService {
     /// Workspace mode bypassed that path, so we inject the minimal set of env vars needed
     /// for the executor CLI to authenticate with the configured API provider.
     ///
-    /// For Codex: copies the user's global `~/.codex/` config (auth.json + config.toml)
-    /// into an isolated CODEX_HOME so the workspace process inherits auth settings.
-    fn resolve_executor_env_vars(
+    /// Priority chain:
+    /// 1. Global CLI authentication (~/.claude/, ~/.codex/) — highest
+    /// 2. model_config stored credentials — fallback
+    /// 3. No credentials → log warning
+    async fn resolve_executor_env_vars(
         base_executor: BaseCodingAgent,
         _executor_action: &ExecutorAction,
+        pool: &sqlx::SqlitePool,
     ) -> HashMap<String, String> {
         let mut vars = HashMap::new();
+
+        if matches!(base_executor, BaseCodingAgent::ClaudeCode) {
+            // Create an isolated CLAUDE_HOME and copy auth from global ~/.claude/
+            let global_claude_home = dirs::home_dir()
+                .map(|h| h.join(".claude"))
+                .filter(|p| p.exists());
+
+            let home_id = format!("ws-{}", uuid::Uuid::new_v4().as_simple());
+            let claude_home = utils::path::get_gitcortex_temp_dir()
+                .join("claude-workspaces")
+                .join(&home_id);
+
+            if let Err(e) = std::fs::create_dir_all(&claude_home) {
+                tracing::warn!(error = %e, "Failed to create workspace CLAUDE_HOME");
+                return vars;
+            }
+
+            let mut has_global_auth = false;
+
+            // Copy config.json and settings.json from global if they exist
+            if let Some(ref global_home) = global_claude_home {
+                for filename in &["config.json", "settings.json"] {
+                    let src = global_home.join(filename);
+                    if src.exists() {
+                        if let Err(e) = std::fs::copy(&src, claude_home.join(filename)) {
+                            tracing::warn!(error = %e, file = filename, "Failed to copy Claude config to workspace");
+                        }
+                        if *filename == "config.json" {
+                            has_global_auth = true;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: inject credentials from model_config if no global auth
+            if !has_global_auth {
+                match db::models::ModelConfig::find_with_credentials_for_cli(pool, "cli-claude-code").await {
+                    Ok(Some(model_config)) => {
+                        if let Ok(Some(api_key)) = model_config.get_api_key() {
+                            vars.insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
+                            vars.insert("ANTHROPIC_AUTH_TOKEN".to_string(), api_key);
+                            tracing::info!("Injected API key from model_config for Claude Code workspace");
+
+                            if let Some(ref base_url) = model_config.base_url {
+                                vars.insert("ANTHROPIC_BASE_URL".to_string(), base_url.clone());
+                                tracing::info!(base_url = %base_url, "Injected base URL for Claude Code workspace");
+                            }
+
+                            // Write primaryApiKey into config.json for Claude Code CLI
+                            let config_path = claude_home.join("config.json");
+                            let mut config_json = if config_path.exists() {
+                                std::fs::read_to_string(&config_path)
+                                    .ok()
+                                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                                    .unwrap_or_else(|| serde_json::json!({}))
+                            } else {
+                                serde_json::json!({})
+                            };
+                            if let Some(obj) = config_json.as_object_mut() {
+                                obj.insert("primaryApiKey".to_string(), serde_json::json!(vars.get("ANTHROPIC_API_KEY").unwrap()));
+                                if let Some(base_url) = model_config.base_url.as_ref() {
+                                    obj.insert("apiBaseUrl".to_string(), serde_json::json!(base_url));
+                                }
+                            }
+                            if let Err(e) = std::fs::write(&config_path, serde_json::to_string_pretty(&config_json).unwrap_or_default()) {
+                                tracing::warn!(error = %e, "Failed to write Claude config.json with API key");
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::warn!("No global Claude auth and no model_config credentials found for workspace mode");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to query model_config credentials for Claude Code");
+                    }
+                }
+            }
+
+            vars.insert(
+                "CLAUDE_HOME".to_string(),
+                claude_home.to_string_lossy().to_string(),
+            );
+            tracing::info!(
+                claude_home = %claude_home.display(),
+                global_claude_home = ?global_claude_home,
+                "Injected CLAUDE_HOME for workspace executor"
+            );
+        }
 
         if matches!(base_executor, BaseCodingAgent::Codex) {
             // Reuse the canonical codex_home() resolver from the executors crate.
@@ -888,9 +979,24 @@ impl LocalContainerService {
                 match executors::executors::codex::codex_home() {
                     Some(p) if p.exists() => p,
                     _ => {
-                        tracing::warn!(
-                            "Codex home directory not found, workspace Codex may lack authentication"
-                        );
+                        // No global codex home — try model_config fallback
+                        match db::models::ModelConfig::find_with_credentials_for_cli(pool, "cli-codex").await {
+                            Ok(Some(model_config)) => {
+                                if let Ok(Some(api_key)) = model_config.get_api_key() {
+                                    vars.insert("OPENAI_API_KEY".to_string(), api_key);
+                                    tracing::info!("Injected API key from model_config for Codex workspace");
+                                    if let Some(ref base_url) = model_config.base_url {
+                                        vars.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
+                                    }
+                                }
+                            }
+                            Ok(None) => {
+                                tracing::warn!("Codex home not found and no model_config credentials available");
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Failed to query model_config credentials for Codex");
+                            }
+                        }
                         return vars;
                     }
                 };
@@ -931,6 +1037,27 @@ impl LocalContainerService {
                 global_codex_home = %global_codex_home.display(),
                 "Injected CODEX_HOME for workspace executor (copied from global config)"
             );
+        }
+
+        if matches!(base_executor, BaseCodingAgent::Gemini) {
+            // Inject Gemini credentials from model_config
+            match db::models::ModelConfig::find_with_credentials_for_cli(pool, "cli-gemini-cli").await {
+                Ok(Some(model_config)) => {
+                    if let Ok(Some(api_key)) = model_config.get_api_key() {
+                        vars.insert("GEMINI_API_KEY".to_string(), api_key);
+                        tracing::info!("Injected API key from model_config for Gemini workspace");
+                        if let Some(ref base_url) = model_config.base_url {
+                            vars.insert("GOOGLE_GEMINI_BASE_URL".to_string(), base_url.clone());
+                        }
+                    }
+                }
+                Ok(None) => {
+                    tracing::debug!("No model_config credentials found for Gemini CLI");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to query model_config credentials for Gemini");
+                }
+            }
         }
 
         vars
@@ -1154,10 +1281,11 @@ impl ContainerService for LocalContainerService {
         env.insert("VK_WORKSPACE_BRANCH", &workspace.branch);
 
         // Inject executor-specific authentication environment variables.
-        // Without this, Codex (and other CLIs) in workspace mode cannot authenticate
-        // because the isolated workspace environment doesn't inherit global CLI configs.
+        // Without this, CLIs in workspace mode cannot authenticate because the
+        // isolated workspace environment doesn't inherit global CLI configs.
+        // Falls back to model_config stored credentials when global auth is missing.
         if let Some(base_executor) = executor_action.base_executor() {
-            let profile_vars = Self::resolve_executor_env_vars(base_executor, executor_action);
+            let profile_vars = Self::resolve_executor_env_vars(base_executor, executor_action, &self.db.pool).await;
             env.merge(&profile_vars);
         }
 
