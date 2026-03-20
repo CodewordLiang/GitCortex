@@ -156,29 +156,48 @@ api_key = "{api_key}"
 ///
 /// Keep `primaryApiKey` aligned with terminal key to avoid runtime precedence
 /// ambiguity between `config.json`, `settings.json`, and env-based auth.
-fn create_claude_config(claude_home: &Path, api_key: &str) -> anyhow::Result<()> {
+fn create_claude_config(
+    claude_home: &Path,
+    api_key: &str,
+    base_url: Option<&str>,
+) -> anyhow::Result<()> {
     let config_path = claude_home.join("config.json");
 
-    // Keep primaryApiKey synced with terminal key.
-    // Some Claude runtime paths prefer config key over env token.
-    // Preserve other fields if file exists
-    let config_content = if config_path.exists() {
-        let existing = std::fs::read_to_string(&config_path)?;
-        let mut value: serde_json::Value =
-            serde_json::from_str(&existing).unwrap_or_else(|_| serde_json::json!({}));
-
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert(
-                "primaryApiKey".to_string(),
-                serde_json::Value::String(api_key.to_string()),
-            );
+    // primaryApiKey is Claude Code's internal authentication (Anthropic account system).
+    // When using a custom base_url (third-party API), do NOT set primaryApiKey — the
+    // third-party key would fail Anthropic's auth validation, causing "Invalid API key".
+    // Instead, rely solely on ANTHROPIC_API_KEY env var for API calls.
+    let config_content = if base_url.is_some() {
+        // Custom endpoint: empty config, auth via env vars only
+        if config_path.exists() {
+            let existing = std::fs::read_to_string(&config_path)?;
+            let mut value: serde_json::Value =
+                serde_json::from_str(&existing).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(obj) = value.as_object_mut() {
+                obj.remove("primaryApiKey");
+            }
+            serde_json::to_string_pretty(&value)?
+        } else {
+            serde_json::to_string_pretty(&serde_json::json!({}))?
         }
-
-        serde_json::to_string_pretty(&value)?
     } else {
-        serde_json::to_string_pretty(&serde_json::json!({
-            "primaryApiKey": api_key
-        }))?
+        // Official Anthropic API: set primaryApiKey for login bypass
+        if config_path.exists() {
+            let existing = std::fs::read_to_string(&config_path)?;
+            let mut value: serde_json::Value =
+                serde_json::from_str(&existing).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert(
+                    "primaryApiKey".to_string(),
+                    serde_json::Value::String(api_key.to_string()),
+                );
+            }
+            serde_json::to_string_pretty(&value)?
+        } else {
+            serde_json::to_string_pretty(&serde_json::json!({
+                "primaryApiKey": api_key
+            }))?
+        }
     };
 
     std::fs::write(&config_path, config_content)
@@ -186,7 +205,8 @@ fn create_claude_config(claude_home: &Path, api_key: &str) -> anyhow::Result<()>
 
     tracing::debug!(
         claude_home = %claude_home.display(),
-        "Created Claude Code config.json for authentication skip"
+        has_custom_base_url = base_url.is_some(),
+        "Created Claude Code config.json for authentication"
     );
 
     Ok(())
@@ -203,10 +223,12 @@ fn create_claude_settings(
     let settings_path = claude_home.join("settings.json");
 
     let mut env_obj = serde_json::Map::new();
-    // Choose auth env var based on key format:
-    // - sk- prefix → direct API key, use ANTHROPIC_API_KEY only
-    // - otherwise → session/OAuth token, use ANTHROPIC_AUTH_TOKEN only
-    if api_key.starts_with("sk-") {
+    // Choose auth env var based on key format and endpoint:
+    // - Custom base_url (third-party API) → always ANTHROPIC_API_KEY (third-party APIs
+    //   don't use Anthropic's OAuth token mechanism)
+    // - Official Anthropic API + sk- prefix → ANTHROPIC_API_KEY
+    // - Official Anthropic API + other format → ANTHROPIC_AUTH_TOKEN (OAuth session token)
+    if base_url.is_some() || api_key.starts_with("sk-") {
         env_obj.insert(
             "ANTHROPIC_API_KEY".to_string(),
             serde_json::Value::String(api_key.to_string()),
@@ -240,10 +262,18 @@ fn create_claude_settings(
         );
     }
 
-    let settings = serde_json::json!({
-        "env": env_obj,
-        "primaryApiKey": api_key,
-    });
+    // primaryApiKey is Claude Code's internal auth (Anthropic account system).
+    // For custom endpoints (third-party API), omit it to prevent validation failure.
+    let settings = if base_url.is_some() {
+        serde_json::json!({
+            "env": env_obj,
+        })
+    } else {
+        serde_json::json!({
+            "env": env_obj,
+            "primaryApiKey": api_key,
+        })
+    };
 
     let content = serde_json::to_string_pretty(&settings)?;
     std::fs::write(&settings_path, content)
@@ -820,7 +850,8 @@ impl CCSwitchService {
                 // G22-003: Propagate config creation failure instead of silently swallowing it.
                 // A missing config.json can cause Claude Code to fall back to global auth,
                 // leading to unexpected billing or auth errors.
-                create_claude_config(&claude_home, &api_key).map_err(|e| {
+                create_claude_config(&claude_home, &api_key, effective_base_url.as_deref())
+                    .map_err(|e| {
                     tracing::error!(
                         terminal_id = %terminal.id,
                         error = %e,
@@ -850,10 +881,12 @@ impl CCSwitchService {
                 args.push("--settings".to_string());
                 args.push(settings_path.to_string_lossy().to_string());
 
-                // Inject auth env var based on key format:
-                // - sk- prefix → direct API key, use ANTHROPIC_API_KEY only
-                // - otherwise → session/OAuth token, use ANTHROPIC_AUTH_TOKEN only
-                if api_key.starts_with("sk-") {
+                // Inject auth env var based on key format and endpoint:
+                // - Custom base_url (third-party API) → always ANTHROPIC_API_KEY
+                //   (third-party APIs don't use Anthropic's OAuth token mechanism)
+                // - Official Anthropic API + sk- prefix → ANTHROPIC_API_KEY
+                // - Official Anthropic API + other format → ANTHROPIC_AUTH_TOKEN
+                if effective_base_url.is_some() || api_key.starts_with("sk-") {
                     env.set
                         .insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
                 } else {
@@ -1168,14 +1201,29 @@ mod tests {
         )
         .expect("failed to seed config.json");
 
-        create_claude_config(claude_home, "new-key").expect("create_claude_config should succeed");
+        // Test with official Anthropic API (no custom base_url): should set primaryApiKey
+        create_claude_config(claude_home, "new-key", None)
+            .expect("create_claude_config should succeed");
 
         let updated: Value = serde_json::from_str(
-            &std::fs::read_to_string(config_path).expect("failed to read updated config.json"),
+            &std::fs::read_to_string(&config_path).expect("failed to read updated config.json"),
         )
         .expect("config.json should be valid JSON");
 
         assert_eq!(updated["primaryApiKey"], "new-key");
+        assert_eq!(updated["foo"], "bar");
+        assert_eq!(updated["nested"]["a"], 1);
+
+        // Test with custom base_url (third-party API): should remove primaryApiKey
+        create_claude_config(claude_home, "third-party-key", Some("https://example.com/api"))
+            .expect("create_claude_config with custom base_url should succeed");
+
+        let updated: Value = serde_json::from_str(
+            &std::fs::read_to_string(&config_path).expect("failed to read updated config.json"),
+        )
+        .expect("config.json should be valid JSON");
+
+        assert!(updated.get("primaryApiKey").is_none(), "primaryApiKey should be removed for custom base_url");
         assert_eq!(updated["foo"], "bar");
         assert_eq!(updated["nested"]["a"], 1);
     }
@@ -1199,8 +1247,12 @@ mod tests {
         )
         .expect("settings.json should be valid JSON");
 
-        assert_eq!(settings["primaryApiKey"], "sk-ant-test");
-        // sk- prefix keys use ANTHROPIC_API_KEY only (not AUTH_TOKEN)
+        // Custom base_url: primaryApiKey should NOT be set (third-party API)
+        assert!(
+            settings.get("primaryApiKey").is_none() || settings["primaryApiKey"].is_null(),
+            "primaryApiKey should be omitted for custom base_url"
+        );
+        // Custom base_url: always use ANTHROPIC_API_KEY (not AUTH_TOKEN)
         assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "sk-ant-test");
         assert!(settings["env"]["ANTHROPIC_AUTH_TOKEN"].is_null());
         assert_eq!(
