@@ -47,6 +47,7 @@ pub fn router() -> Router<DeploymentImpl> {
         )
         .route("/agents/check-availability", get(check_agent_availability))
         .route("/agents/install-ai-clis", post(install_ai_clis))
+        .route("/system/prerequisites", get(get_system_prerequisites))
 }
 
 const REMOTE_FEATURES_ENABLED: bool = false;
@@ -785,4 +786,93 @@ async fn install_ai_clis(
 
         Ok(ResponseJson(ApiResponse::success(install_result)))
     }
+}
+
+// ============================================================================
+// System prerequisites detection
+// ============================================================================
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct PrerequisiteStatus {
+    pub name: String,
+    pub found: bool,
+    pub version: Option<String>,
+    pub required: bool,
+    pub hint: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct SystemPrerequisites {
+    pub items: Vec<PrerequisiteStatus>,
+}
+
+fn detect_tool_version(cmd: &str, args: &[&str]) -> (bool, Option<String>) {
+    let result = std::process::Command::new(cmd)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    match result {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let version = stdout.lines().next().unwrap_or("").trim().to_string();
+            (true, if version.is_empty() { None } else { Some(version) })
+        }
+        _ => (false, None),
+    }
+}
+
+async fn get_system_prerequisites() -> ResponseJson<ApiResponse<SystemPrerequisites>> {
+    // Run blocking detection in a spawn_blocking to avoid blocking the async runtime
+    let items = tokio::task::spawn_blocking(|| {
+        let mut items = Vec::new();
+
+        // Node.js
+        let (found, version) = detect_tool_version("node", &["--version"]);
+        items.push(PrerequisiteStatus {
+            name: "Node.js".to_string(),
+            found,
+            version,
+            required: true,
+            hint: "Install from https://nodejs.org (v18+)".to_string(),
+        });
+
+        // npm
+        let (found, version) = detect_tool_version("npm", &["--version"]);
+        items.push(PrerequisiteStatus {
+            name: "npm".to_string(),
+            found,
+            version,
+            required: true,
+            hint: "Included with Node.js installation".to_string(),
+        });
+
+        // Git
+        let (found, version) = detect_tool_version("git", &["--version"]);
+        items.push(PrerequisiteStatus {
+            name: "Git".to_string(),
+            found,
+            version,
+            required: true,
+            hint: "Install from https://git-scm.com".to_string(),
+        });
+
+        // GitHub CLI (optional)
+        let (found, version) = detect_tool_version("gh", &["--version"]);
+        let version = version.and_then(|v| v.lines().next().map(|l| l.to_string()));
+        items.push(PrerequisiteStatus {
+            name: "GitHub CLI (gh)".to_string(),
+            found,
+            version,
+            required: false,
+            hint: "Optional. Install from https://cli.github.com".to_string(),
+        });
+
+        items
+    })
+    .await
+    .unwrap_or_default();
+
+    ResponseJson(ApiResponse::success(SystemPrerequisites { items }))
 }

@@ -7,6 +7,8 @@ import {
   Package,
   FolderOpen,
   Globe,
+  Wrench,
+  XCircle,
 } from '@phosphor-icons/react';
 import { handleApiResponse } from '@/lib/api';
 import { cliTypesKeys } from '@/hooks/useCliTypes';
@@ -22,6 +24,18 @@ interface CliRuntimeInfo {
   version?: string;
   latest_version?: string;
   has_update?: boolean;
+}
+
+interface PrerequisiteStatus {
+  name: string;
+  found: boolean;
+  version?: string | null;
+  required: boolean;
+  hint: string;
+}
+
+interface SystemPrerequisites {
+  items: PrerequisiteStatus[];
 }
 
 // ============================================================================
@@ -45,6 +59,18 @@ function useRuntimeCliStatus() {
   });
 }
 
+function useSystemPrerequisites() {
+  return useQuery<PrerequisiteStatus[]>({
+    queryKey: ['runtime', 'prerequisites'],
+    queryFn: async () => {
+      const response = await fetch('/api/system/prerequisites');
+      const data = await handleApiResponse<SystemPrerequisites>(response);
+      return data?.items || [];
+    },
+    staleTime: 120_000,
+  });
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -53,6 +79,8 @@ export function RuntimeSettingsNew() {
   const { t } = useTranslation(['settings']);
   const queryClient = useQueryClient();
   const { data: cliStatuses, isLoading } = useRuntimeCliStatus();
+  const { data: prerequisites, isLoading: prereqLoading } =
+    useSystemPrerequisites();
 
   const refreshMutation = useMutation({
     mutationFn: async () => {
@@ -65,6 +93,21 @@ export function RuntimeSettingsNew() {
       queryClient.invalidateQueries({ queryKey: cliTypesKeys.detection });
     },
   });
+
+  const refreshPrereqMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/system/prerequisites');
+      return handleApiResponse(response);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['runtime', 'prerequisites'] });
+    },
+  });
+
+  const missingRequired = prerequisites?.filter(
+    (p) => p.required && !p.found
+  );
+  const allRequiredMet = missingRequired?.length === 0;
 
   return (
     <div className="space-y-double">
@@ -79,6 +122,96 @@ export function RuntimeSettingsNew() {
             'Manage bundled tools, npm mirror settings, and CLI versions.',
           )}
         </p>
+      </div>
+
+      {/* System Prerequisites Section */}
+      <div className="rounded border p-base">
+        <div className="mb-base flex items-center justify-between">
+          <div className="flex items-center gap-half">
+            <Wrench className="size-icon-md text-brand" weight="duotone" />
+            <h3 className="text-base font-medium text-high">
+              {t(
+                'settings:runtime.prerequisites',
+                'System Prerequisites',
+              )}
+            </h3>
+            {!prereqLoading && prerequisites && (
+              <span
+                className={`ml-half rounded px-half text-xs ${
+                  allRequiredMet
+                    ? 'bg-success/10 text-success'
+                    : 'bg-error/10 text-error'
+                }`}
+              >
+                {allRequiredMet
+                  ? t('settings:runtime.prereqAllMet', 'All met')
+                  : t('settings:runtime.prereqMissing', '{{count}} missing', {
+                      count: missingRequired?.length ?? 0,
+                    })}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => refreshPrereqMutation.mutate()}
+            disabled={refreshPrereqMutation.isPending}
+            className="flex items-center gap-half rounded border px-half py-1 text-xs text-low hover:text-normal disabled:opacity-50"
+          >
+            <ArrowsClockwise
+              className={`size-icon-xs ${refreshPrereqMutation.isPending ? 'animate-spin' : ''}`}
+            />
+            {t('settings:runtime.refresh', 'Refresh')}
+          </button>
+        </div>
+
+        {prereqLoading ? (
+          <div className="py-base text-center text-sm text-low">
+            {t(
+              'settings:runtime.prereqLoading',
+              'Checking system prerequisites...',
+            )}
+          </div>
+        ) : (
+          <div className="space-y-half">
+            {prerequisites?.map((dep) => (
+              <div
+                key={dep.name}
+                className="flex items-center justify-between rounded bg-panel px-base py-half"
+              >
+                <div className="flex items-center gap-half">
+                  {dep.found ? (
+                    <CheckCircle
+                      className="size-icon-sm text-success"
+                      weight="fill"
+                    />
+                  ) : dep.required ? (
+                    <XCircle
+                      className="size-icon-sm text-error"
+                      weight="fill"
+                    />
+                  ) : (
+                    <Warning className="size-icon-sm text-low" />
+                  )}
+                  <span className="text-sm text-high">{dep.name}</span>
+                  {!dep.required && (
+                    <span className="text-xs text-low">
+                      ({t('settings:runtime.optional', 'optional')})
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-base">
+                  {dep.found && dep.version ? (
+                    <span className="font-ibm-plex-mono text-xs text-low">
+                      {dep.version}
+                    </span>
+                  ) : !dep.found ? (
+                    <span className="text-xs text-low">{dep.hint}</span>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* CLI Tools Section */}
